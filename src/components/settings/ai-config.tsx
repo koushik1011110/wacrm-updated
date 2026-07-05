@@ -34,11 +34,13 @@ const MASKED_KEY = '••••••••••••••••';
 const PROVIDER_LABEL: Record<AiProvider, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic (Claude)',
+  gemini: 'Google Gemini',
 };
 
 const KEY_PLACEHOLDER: Record<AiProvider, string> = {
   openai: 'sk-...',
   anthropic: 'sk-ant-...',
+  gemini: 'AIzaSy...',
 };
 
 export function AiConfig() {
@@ -115,6 +117,7 @@ export function AiConfig() {
     const isDefaultModel =
       model === AI_PROVIDER_DEFAULT_MODEL.openai ||
       model === AI_PROVIDER_DEFAULT_MODEL.anthropic ||
+      model === AI_PROVIDER_DEFAULT_MODEL.gemini ||
       model.trim() === '';
     if (isDefaultModel) setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
   };
@@ -226,7 +229,7 @@ export function AiConfig() {
     <div>
       <SettingsPanelHead
         title="Agent setup"
-        description="Bring your own OpenAI or Anthropic key. wacrm calls the provider directly with your key — no per-seat AI fees, and your data stays yours. This powers AI-drafted replies in the inbox, the auto-reply bot, and the Playground."
+        description="Bring your own OpenAI, Anthropic, or Google Gemini key. wacrm calls the provider directly with your key — no per-seat AI fees, and your data stays yours. This powers AI-drafted replies in the inbox, the auto-reply bot, and the Playground."
       />
 
       {!canEdit && (
@@ -263,28 +266,51 @@ export function AiConfig() {
                     <SelectItem value="anthropic">
                       {PROVIDER_LABEL.anthropic}
                     </SelectItem>
+                    <SelectItem value="gemini">
+                      {PROVIDER_LABEL.gemini}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="ai-model">Model</Label>
-                <Input
-                  id="ai-model"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder={AI_PROVIDER_DEFAULT_MODEL[provider]}
-                  disabled={disabled}
-                />
+                {provider === 'gemini' ? (
+                  <Select
+                    value={model}
+                    onValueChange={(v) => setModel(v || '')}
+                    disabled={disabled}
+                  >
+                    <SelectTrigger id="ai-model">
+                      <SelectValue placeholder="Select a Gemini model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="gemini-2.5-flash">Gemini 2.5 Flash</SelectItem>
+                      <SelectItem value="gemini-2.5-pro">Gemini 2.5 Pro</SelectItem>
+                      <SelectItem value="gemini-1.5-flash">Gemini 1.5 Flash</SelectItem>
+                      <SelectItem value="gemini-1.5-pro">Gemini 1.5 Pro</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Input
+                    id="ai-model"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    placeholder={AI_PROVIDER_DEFAULT_MODEL[provider]}
+                    disabled={disabled}
+                  />
+                )}
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="ai-key">API key</Label>
+              <Label htmlFor={provider === 'gemini' ? 'gemini-api-key' : 'ai-key'}>
+                {provider === 'gemini' ? 'Google Gemini API Key' : 'API key'}
+              </Label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <Input
-                    id="ai-key"
+                    id={provider === 'gemini' ? 'gemini-api-key' : 'ai-key'}
                     type={showKey ? 'text' : 'password'}
                     value={apiKey}
                     onChange={(e) => {
