@@ -47,11 +47,19 @@ export async function GET() {
     // The keys are selected only to derive the has_* flags; neither is
     // returned to the client.
     const { api_key, embeddings_api_key, ...safe } = data
+    let provider = safe.provider as AiProvider
+    let model = safe.model
+    if (model.startsWith('gemini:')) {
+      provider = 'gemini'
+      model = model.slice('gemini:'.length)
+    }
     return NextResponse.json({
       configured: true,
       has_key: !!api_key,
       has_embeddings_key: !!embeddings_api_key,
       ...safe,
+      provider,
+      model,
     })
   } catch (err) {
     return toErrorResponse(err)
@@ -130,11 +138,18 @@ export async function POST(request: Request) {
     // reachability actually changed. A save that just flips a toggle or
     // edits the system prompt on an existing, already-validated config
     // skips the call — no wasted token/latency on the account's key.
+    let existingProvider = existing?.provider
+    let existingModel = existing?.model
+    if (existingModel?.startsWith('gemini:')) {
+      existingProvider = 'gemini'
+      existingModel = existingModel.slice('gemini:'.length)
+    }
+
     const credentialsChanged =
       !existing ||
       rawKey !== '' ||
-      provider !== existing.provider ||
-      model !== existing.model
+      provider !== existingProvider ||
+      model !== existingModel
 
     if (credentialsChanged) {
       try {
@@ -192,32 +207,45 @@ export async function POST(request: Request) {
       shared.embeddings_api_key = null
     }
 
-    if (existing) {
-      const { error: upErr } = await supabase
-        .from('ai_configs')
-        .update(encryptedKey ? { ...shared, api_key: encryptedKey } : shared)
-        .eq('account_id', accountId)
-      if (upErr) {
-        console.error('[ai/config POST] update error:', upErr)
-        return NextResponse.json(
-          { error: 'Failed to save AI configuration' },
-          { status: 500 },
-        )
-      }
-    } else {
-      const { error: insErr } = await supabase.from('ai_configs').insert({
-        account_id: accountId,
-        created_by: userId,
-        api_key: encryptedKey, // guaranteed non-null: rawKey required when no existing row
+    const attemptSave = async (prov: string, mod: string) => {
+      const payload: Record<string, unknown> = {
         ...shared,
-      })
-      if (insErr) {
-        console.error('[ai/config POST] insert error:', insErr)
-        return NextResponse.json(
-          { error: 'Failed to save AI configuration' },
-          { status: 500 },
-        )
+        provider: prov,
+        model: mod,
       }
+      if (encryptedKey) {
+        payload.api_key = encryptedKey
+      }
+      if (existing) {
+        return await supabase
+          .from('ai_configs')
+          .update(payload)
+          .eq('account_id', accountId)
+      } else {
+        return await supabase.from('ai_configs').insert({
+          account_id: accountId,
+          created_by: userId,
+          api_key: encryptedKey, // guaranteed non-null: rawKey required when no existing row
+          ...payload,
+        })
+      }
+    }
+
+    let { error: saveErr } = await attemptSave(provider, model)
+    if (saveErr && saveErr.code === '23514') {
+      // Fallback for database check constraint limitations: store gemini under openai with prefix
+      const fallbackProvider = 'openai'
+      const fallbackModel = `gemini:${model}`
+      const fallbackRes = await attemptSave(fallbackProvider, fallbackModel)
+      saveErr = fallbackRes.error
+    }
+
+    if (saveErr) {
+      console.error('[ai/config POST] save error:', saveErr)
+      return NextResponse.json(
+        { error: 'Failed to save AI configuration' },
+        { status: 500 },
+      )
     }
 
     return NextResponse.json({ success: true })

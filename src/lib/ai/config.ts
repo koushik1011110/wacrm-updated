@@ -68,9 +68,16 @@ export async function loadAiConfig(
     }
   }
 
+  let provider = row.provider
+  let model = row.model
+  if (model.startsWith('gemini:')) {
+    provider = 'gemini'
+    model = model.slice('gemini:'.length)
+  }
+
   return {
-    provider: row.provider,
-    model: row.model,
+    provider,
+    model,
     apiKey: decrypt(row.api_key),
     systemPrompt: row.system_prompt,
     isActive: row.is_active,

@@ -245,4 +245,34 @@ describe('generateReply — Gemini', () => {
       }),
     ).rejects.toBeInstanceOf(AiError)
   })
+
+  it('drops a leading assistant turn so the payload starts on the customer', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        okResponse({
+          candidates: [
+            {
+              content: {
+                parts: [{ text: 'ok' }],
+              },
+            },
+          ],
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await generateReply({
+      config: config({ provider: 'gemini' }),
+      systemPrompt: 'sys',
+      messages: [
+        { role: 'assistant', content: 'Welcome!' },
+        { role: 'user', content: 'Hi' },
+      ],
+    })
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.contents[0].role).toBe('user')
+    expect(body.contents).toHaveLength(1)
+  })
 })

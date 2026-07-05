@@ -1,4 +1,4 @@
-import { AiError } from '../types'
+import { AiError, type ChatMessage } from '../types'
 import { MAX_OUTPUT_TOKENS } from '../defaults'
 import {
   mergeConsecutive,
@@ -15,6 +15,17 @@ interface GeminiResponse {
   }[]
 }
 
+function normalizeForGemini(messages: ChatMessage[]): ChatMessage[] {
+  const merged = mergeConsecutive(messages)
+  while (merged.length > 0 && merged[0].role === 'assistant') {
+    merged.shift()
+  }
+  if (merged.length === 0) {
+    return [{ role: 'user', content: '(The customer has not sent a message yet.)' }]
+  }
+  return merged
+}
+
 /**
  * Call Google Gemini's generateContent endpoint with the caller's own key.
  * Returns the raw assistant text (handoff parsing happens in `generateReply`).
@@ -24,7 +35,7 @@ export async function generateGemini(args: ProviderArgs): Promise<string> {
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
 
-  const contents = mergeConsecutive(messages).map((m) => ({
+  const contents = normalizeForGemini(messages).map((m) => ({
     role: m.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: m.content }],
   }))

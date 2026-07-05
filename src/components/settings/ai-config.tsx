@@ -275,31 +275,13 @@ export function AiConfig() {
 
               <div className="space-y-2">
                 <Label htmlFor="ai-model">Model</Label>
-                {provider === 'gemini' ? (
-                  <Select
-                    value={model}
-                    onValueChange={(v) => setModel(v || '')}
-                    disabled={disabled}
-                  >
-                    <SelectTrigger id="ai-model">
-                      <SelectValue placeholder="Select a Gemini model" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="gemini-2.5-flash">Gemini 2.5 Flash</SelectItem>
-                      <SelectItem value="gemini-2.5-pro">Gemini 2.5 Pro</SelectItem>
-                      <SelectItem value="gemini-1.5-flash">Gemini 1.5 Flash</SelectItem>
-                      <SelectItem value="gemini-1.5-pro">Gemini 1.5 Pro</SelectItem>
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Input
-                    id="ai-model"
-                    value={model}
-                    onChange={(e) => setModel(e.target.value)}
-                    placeholder={AI_PROVIDER_DEFAULT_MODEL[provider]}
-                    disabled={disabled}
-                  />
-                )}
+                <Input
+                  id="ai-model"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  placeholder={AI_PROVIDER_DEFAULT_MODEL[provider]}
+                  disabled={disabled}
+                />
               </div>
             </div>
 

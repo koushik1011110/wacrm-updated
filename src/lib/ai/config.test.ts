@@ -48,4 +48,19 @@ describe('loadAiConfig requireActive', () => {
       await loadAiConfig(dbReturning(null), 'acct', { requireActive: false }),
     ).toBeNull()
   })
+
+  it('transparently maps gemini: prefixed models to gemini provider', async () => {
+    const config = await loadAiConfig(
+      dbReturning({
+        ...ROW,
+        provider: 'openai',
+        model: 'gemini:gemini-2.5-pro',
+      }),
+      'acct',
+      { requireActive: false }
+    )
+    expect(config).not.toBeNull()
+    expect(config!.provider).toBe('gemini')
+    expect(config!.model).toBe('gemini-2.5-pro')
+  })
 })
