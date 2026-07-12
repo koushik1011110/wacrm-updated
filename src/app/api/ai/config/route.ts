@@ -25,22 +25,45 @@ export async function GET() {
   try {
     const { supabase, accountId } = await getCurrentAccount()
 
-    const { data, error } = await supabase
+    let data: any = null
+    let error: any = null
+
+    const fetchResult = await supabase
       .from('ai_configs')
-      // `api_key` is selected only to derive `has_key` — it is stripped
-      // out below and never returned to the client.
       .select(
-        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, api_key, embeddings_api_key',
+        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, daily_message_limit, api_key, embeddings_api_key',
       )
       .eq('account_id', accountId)
       .maybeSingle()
 
+    error = fetchResult.error
+    data = fetchResult.data
+
     if (error) {
-      console.error('[ai/config GET] fetch error:', error)
-      return NextResponse.json(
-        { error: 'Failed to load AI configuration' },
-        { status: 500 },
-      )
+      if (error.code === 'PGRST204' || (error.message && error.message.includes('daily_message_limit'))) {
+        const retryResult = await supabase
+          .from('ai_configs')
+          .select(
+            'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, api_key, embeddings_api_key',
+          )
+          .eq('account_id', accountId)
+          .maybeSingle()
+
+        if (retryResult.error) {
+          console.error('[ai/config GET] fetch retry error:', retryResult.error)
+          return NextResponse.json(
+            { error: 'Failed to load AI configuration' },
+            { status: 500 },
+          )
+        }
+        data = retryResult.data ? { ...retryResult.data, daily_message_limit: 50 } : null
+      } else {
+        console.error('[ai/config GET] fetch error:', error)
+        return NextResponse.json(
+          { error: 'Failed to load AI configuration' },
+          { status: 500 },
+        )
+      }
     }
 
     if (!data) return NextResponse.json({ configured: false })
@@ -101,7 +124,11 @@ export async function POST(request: Request) {
 
     let maxPer = Number(body.auto_reply_max_per_conversation)
     if (!Number.isFinite(maxPer)) maxPer = 3
-    maxPer = Math.min(20, Math.max(1, Math.floor(maxPer)))
+    maxPer = Math.min(40, Math.max(1, Math.floor(maxPer)))
+
+    let dailyLimit = Number(body.daily_message_limit)
+    if (!Number.isFinite(dailyLimit)) dailyLimit = 50
+    dailyLimit = Math.min(1000, Math.max(1, Math.floor(dailyLimit)))
 
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : ''
 
@@ -161,6 +188,7 @@ export async function POST(request: Request) {
           isActive,
           autoReplyEnabled,
           autoReplyMaxPerConversation: maxPer,
+          dailyMessageLimit: dailyLimit,
           embeddingsApiKey: null,
         })
       } catch (err) {
@@ -199,7 +227,7 @@ export async function POST(request: Request) {
       system_prompt: systemPrompt,
       is_active: isActive,
       auto_reply_enabled: autoReplyEnabled,
-      auto_reply_max_per_conversation: maxPer,
+      daily_message_limit: dailyLimit,
     }
     if (rawEmbeddingsKey) {
       shared.embeddings_api_key = encrypt(rawEmbeddingsKey)
@@ -207,11 +235,18 @@ export async function POST(request: Request) {
       shared.embeddings_api_key = null
     }
 
+    let dailyMessageLimitColumnExists = true
+    let maxRepliesCap = maxPer
+
     const attemptSave = async (prov: string, mod: string) => {
       const payload: Record<string, unknown> = {
         ...shared,
         provider: prov,
         model: mod,
+        auto_reply_max_per_conversation: maxRepliesCap,
+      }
+      if (!dailyMessageLimitColumnExists) {
+        delete payload.daily_message_limit
       }
       if (encryptedKey) {
         payload.api_key = encryptedKey
@@ -231,13 +266,40 @@ export async function POST(request: Request) {
       }
     }
 
-    let { error: saveErr } = await attemptSave(provider, model)
-    if (saveErr && saveErr.code === '23514') {
+    const runSave = async (prov: string, mod: string) => {
+      let res = await attemptSave(prov, mod)
+      if (res.error) {
+        // Fallback 1: Missing daily_message_limit column
+        if (
+          res.error.code === 'PGRST204' ||
+          (res.error.message && res.error.message.includes('daily_message_limit'))
+        ) {
+          dailyMessageLimitColumnExists = false
+          res = await attemptSave(prov, mod)
+        }
+        // Fallback 2: auto_reply_max_per_conversation check constraint (20 max allowed previously)
+        if (
+          res.error &&
+          res.error.code === '23514' &&
+          res.error.message &&
+          res.error.message.includes('auto_reply_max_per_conversation_check')
+        ) {
+          maxRepliesCap = Math.min(20, maxPer)
+          res = await attemptSave(prov, mod)
+        }
+      }
+      return res
+    }
+
+    let saveRes = await runSave(provider, model)
+    let saveErr = saveRes.error
+
+    if (saveErr && saveErr.code === '23514' && !saveErr.message.includes('auto_reply_max_per_conversation_check')) {
       // Fallback for database check constraint limitations: store gemini under openai with prefix
       const fallbackProvider = 'openai'
       const fallbackModel = `gemini:${model}`
-      const fallbackRes = await attemptSave(fallbackProvider, fallbackModel)
-      saveErr = fallbackRes.error
+      saveRes = await runSave(fallbackProvider, fallbackModel)
+      saveErr = saveRes.error
     }
 
     if (saveErr) {
@@ -246,6 +308,13 @@ export async function POST(request: Request) {
         { error: 'Failed to save AI configuration' },
         { status: 500 },
       )
+    }
+
+    // Refresh/reload schema cache after save (fails silently if function not created yet)
+    try {
+      await supabase.rpc('reload_schema')
+    } catch (e) {
+      // Ignored if migration hasn't been applied yet
     }
 
     return NextResponse.json({ success: true })

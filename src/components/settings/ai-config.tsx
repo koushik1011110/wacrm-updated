@@ -66,6 +66,7 @@ export function AiConfig() {
   const [isActive, setIsActive] = useState(false);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState(false);
   const [maxPerConversation, setMaxPerConversation] = useState(3);
+  const [dailyMessageLimit, setDailyMessageLimit] = useState(50);
 
   // Guard keyed on the account (not a bare boolean) so an in-place
   // account switch — ownership transfer, multi-account membership —
@@ -90,6 +91,7 @@ export function AiConfig() {
         setIsActive(data.is_active);
         setAutoReplyEnabled(data.auto_reply_enabled);
         setMaxPerConversation(data.auto_reply_max_per_conversation ?? 3);
+        setDailyMessageLimit(data.daily_message_limit ?? 50);
         setHasStoredKey(Boolean(data.has_key));
         setApiKey(data.has_key ? MASKED_KEY : '');
         setKeyEdited(false);
@@ -137,6 +139,7 @@ export function AiConfig() {
     is_active: isActive,
     auto_reply_enabled: autoReplyEnabled,
     auto_reply_max_per_conversation: maxPerConversation,
+    daily_message_limit: dailyMessageLimit,
   });
 
   const handleTest = async () => {
@@ -203,6 +206,7 @@ export function AiConfig() {
         setKeyEdited(false);
         setIsActive(false);
         setAutoReplyEnabled(false);
+        setDailyMessageLimit(50);
         setSystemPrompt('');
       } else {
         const data = await res.json();
@@ -441,11 +445,34 @@ export function AiConfig() {
                 id="ai-max"
                 type="number"
                 min={1}
-                max={20}
+                max={40}
                 value={maxPerConversation}
                 onChange={(e) =>
                   setMaxPerConversation(
-                    Math.min(20, Math.max(1, Number(e.target.value) || 1)),
+                    Math.min(40, Math.max(1, Number(e.target.value) || 1)),
+                  )
+                }
+                disabled={disabled || !autoReplyEnabled}
+                className="w-20"
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="ai-daily-limit">Daily message limit</Label>
+                <p className="text-xs text-muted-foreground">
+                  The maximum number of automated AI replies sent across all contacts per day.
+                </p>
+              </div>
+              <Input
+                id="ai-daily-limit"
+                type="number"
+                min={1}
+                max={1000}
+                value={dailyMessageLimit}
+                onChange={(e) =>
+                  setDailyMessageLimit(
+                    Math.min(1000, Math.max(1, Number(e.target.value) || 1)),
                   )
                 }
                 disabled={disabled || !autoReplyEnabled}

@@ -10,11 +10,12 @@ interface AiConfigRow {
   is_active: boolean
   auto_reply_enabled: boolean
   auto_reply_max_per_conversation: number
+  daily_message_limit: number
   embeddings_api_key: string | null
 }
 
 const CONFIG_COLUMNS =
-  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, embeddings_api_key'
+  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, daily_message_limit, embeddings_api_key'
 
 /**
  * Load and decrypt the account's AI config for *use* (draft or
@@ -33,13 +34,34 @@ export async function loadAiConfig(
   opts: { requireActive?: boolean } = {},
 ): Promise<AiConfig | null> {
   const { requireActive = true } = opts
-  const { data, error } = await db
+  let data: any = null
+  let error: any = null
+
+  const fetchRes = await db
     .from('ai_configs')
     .select(CONFIG_COLUMNS)
     .eq('account_id', accountId)
     .maybeSingle()
 
-  if (error) throw error
+  data = fetchRes.data
+  error = fetchRes.error
+
+  if (error) {
+    if (error.code === 'PGRST204' || (error.message && error.message.includes('daily_message_limit'))) {
+      const fallbackColumns = CONFIG_COLUMNS.replace(', daily_message_limit', '')
+      const retryRes = await db
+        .from('ai_configs')
+        .select(fallbackColumns)
+        .eq('account_id', accountId)
+        .maybeSingle()
+
+      if (retryRes.error) throw retryRes.error
+      data = retryRes.data ? { ...(retryRes.data as any), daily_message_limit: 50 } : null
+    } else {
+      throw error
+    }
+  }
+
   if (!data) return null
 
   const row = data as AiConfigRow
@@ -83,6 +105,7 @@ export async function loadAiConfig(
     isActive: row.is_active,
     autoReplyEnabled: row.auto_reply_enabled,
     autoReplyMaxPerConversation: row.auto_reply_max_per_conversation,
+    dailyMessageLimit: row.daily_message_limit,
     embeddingsApiKey,
   }
 }

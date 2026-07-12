@@ -293,14 +293,11 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
         await processMessage(
           message,
           contact,
-          // Tenancy — drives every contact / conversation lookup
-          // and the engines' active-row dispatch.
           config.account_id,
-          // Audit / sender-of-record — used as the user_id on row
-          // inserts that need it for NOT NULL FK compliance. Always
-          // the admin who saved the WhatsApp config.
           config.user_id,
-          decryptedAccessToken
+          decryptedAccessToken,
+          phoneNumberId,
+          entry.id
         )
       }
     }
@@ -568,29 +565,92 @@ async function processMessage(
   // (contacts, conversations). Always the admin who saved the
   // WhatsApp config; the choice is arbitrary post-017 but stable.
   configOwnerUserId: string,
-  accessToken: string
+  accessToken: string,
+  phoneNumberId: string,
+  businessAccountId: string
 ) {
+  console.log('[webhook] received:', {
+    eventType: 'messages',
+    messageId: message.id,
+    senderPhone: message.from,
+    phoneNumberId,
+    businessAccountId,
+    messageType: message.type,
+  })
+
   const senderPhone = normalizePhone(message.from)
-  const contactName = contact.profile.name
+  console.log('[webhook] sender normalized:', { phone: senderPhone })
+
+  // Prevent duplicate webhook processing by checking if message_id already exists in messages
+  if (message.id) {
+    const { data: duplicateMsg, error: duplicateErr } = await supabaseAdmin()
+      .from('messages')
+      .select('id')
+      .eq('message_id', message.id)
+      .limit(1)
+      .maybeSingle()
+
+    if (duplicateErr) {
+      console.error('[webhook] failed to query duplicate message ID:', duplicateErr)
+    }
+
+    if (duplicateMsg) {
+      console.log(`[webhook] duplicate message check: skipped incoming message ID ${message.id} (already exists)`)
+      return
+    }
+  }
 
   // Find or create contact
   const contactOutcome = await findOrCreateContact(
     accountId,
     configOwnerUserId,
     senderPhone,
-    contactName
+    contact.profile.name,
+    message
   )
-  if (!contactOutcome) return
+  if (!contactOutcome) {
+    console.error(`[webhook] skipped message ID ${message.id}: contact lookup/creation failed`)
+    return
+  }
   const contactRecord = contactOutcome.contact
 
   // Find or create conversation
   const convResult = await findOrCreateConversation(
     accountId,
     configOwnerUserId,
-    contactRecord.id
+    contactRecord.id,
+    message
   )
   if (!convResult) return
   const conversation = convResult.conversation
+
+  // If conversation already existed, check if it's a new inquiry (closed status or >24h inactivity)
+  if (!convResult.created) {
+    const lastMessageTime = conversation.last_message_at
+      ? new Date(conversation.last_message_at).getTime()
+      : 0
+    if (
+      conversation.status === 'closed' ||
+      !conversation.last_message_at ||
+      Date.now() - lastMessageTime > 24 * 60 * 60 * 1000
+    ) {
+      const { error: resetErr } = await supabaseAdmin()
+        .from('conversations')
+        .update({
+          ai_reply_count: 0,
+          ai_autoreply_disabled: false,
+          status: 'open',
+        })
+        .eq('id', conversation.id)
+      if (resetErr) {
+        console.error('Error resetting conversation AI state for new inquiry:', resetErr)
+      } else {
+        conversation.ai_reply_count = 0
+        conversation.ai_autoreply_disabled = false
+        conversation.status = 'open'
+      }
+    }
+  }
 
   // Emit conversation.created as soon as the thread is opened — BEFORE
   // the reaction short-circuit below — so a conversation first opened by
@@ -666,7 +726,7 @@ async function processMessage(
     .eq('sender_type', 'customer')
   const isFirstInboundMessage = (priorCustomerMsgCount ?? 0) === 0
 
-  const { error: msgError } = await supabaseAdmin().from('messages').insert({
+  const { data: dbMsg, error: msgError } = await supabaseAdmin().from('messages').insert({
     conversation_id: conversation.id,
     sender_type: 'customer',
     content_type: contentType,
@@ -681,11 +741,26 @@ async function processMessage(
     // behave identically.
     interactive_reply_id: interactiveReplyId,
   })
+  .select('id')
+  .maybeSingle()
 
   if (msgError) {
-    console.error('Error inserting message:', msgError)
+    console.error('[webhook] incoming message save failed', {
+      whatsappMessageId: message.id,
+      senderNumber: message.from,
+      workspaceId: accountId,
+      whatsappAccountId: accountId,
+      dbErrorCode: msgError.code,
+      errorMessage: msgError.message,
+      stack: new Error().stack,
+    })
     return
   }
+
+  console.log('[webhook] incoming message saved', {
+    messageId: message.id,
+    dbMessageId: dbMsg?.id,
+  })
 
   // Update conversation
   const { error: convError } = await supabaseAdmin()
@@ -734,16 +809,16 @@ async function processMessage(
     message:
       interactiveReplyId
         ? {
-            kind: 'interactive_reply',
-            reply_id: interactiveReplyId,
-            reply_title: contentText ?? '',
-            meta_message_id: message.id,
-          }
+          kind: 'interactive_reply',
+          reply_id: interactiveReplyId,
+          reply_title: contentText ?? '',
+          meta_message_id: message.id,
+        }
         : {
-            kind: 'text',
-            text: contentText ?? message.text?.body ?? '',
-            meta_message_id: message.id,
-          },
+          kind: 'text',
+          text: contentText ?? message.text?.body ?? '',
+          meta_message_id: message.id,
+        },
     isFirstInboundMessage,
   })
   const flowConsumed = flowResult.consumed
@@ -796,6 +871,7 @@ async function processMessage(
       conversationId: conversation.id,
       contactId: contactRecord.id,
       configOwnerUserId,
+      incomingMessageId: dbMsg?.id || null,
     })
   }
 
@@ -974,14 +1050,9 @@ async function findOrCreateContact(
   accountId: string,
   configOwnerUserId: string,
   phone: string,
-  name: string
+  name: string,
+  message: WhatsAppMessage
 ): Promise<ContactOutcome | null> {
-  // Find an existing contact for this account by phone. The shared
-  // helper pre-filters in SQL by the last-8-digit suffix (so we don't
-  // pull every contact on every inbound message) then applies the
-  // strict `phonesMatch` in JS on the small candidate set. The same
-  // helper backs the manual contact form and CSV import, so all three
-  // paths agree on what "same number" means (issue #212).
   const existingContact = await findExistingContact(
     supabaseAdmin(),
     accountId,
@@ -989,20 +1060,17 @@ async function findOrCreateContact(
   )
 
   if (existingContact) {
-    // Update name if it changed
     if (name && name !== existingContact.name) {
       await supabaseAdmin()
         .from('contacts')
         .update({ name, updated_at: new Date().toISOString() })
         .eq('id', existingContact.id)
     }
+    console.log('[webhook] contact lookup completed', { contact: existingContact })
     return { contact: existingContact, wasCreated: false }
   }
 
-  // Create new contact. account_id is the tenancy column;
-  // user_id is the NOT NULL FK audit column (no inbound message
-  // has a single "user who created" it — we attribute to the
-  // WhatsApp config owner as a stable default).
+  // Create new contact
   const { data: newContact, error: createError } = await supabaseAdmin()
     .from('contacts')
     .insert({
@@ -1015,18 +1083,27 @@ async function findOrCreateContact(
     .single()
 
   if (createError) {
-    // Lost a race: a concurrent inbound delivery (or another path)
-    // created this contact between our lookup and insert, and the
-    // unique index (migration 022) rejected the duplicate. Re-resolve
-    // the existing row instead of dropping the message.
     if (isUniqueViolation(createError)) {
       const raced = await findExistingContact(supabaseAdmin(), accountId, phone)
       if (raced) return { contact: raced, wasCreated: false }
     }
-    console.error('Error creating contact:', createError)
+    console.error('[webhook] contact creation failed', {
+      whatsappMessageId: message.id,
+      senderNumber: phone,
+      workspaceId: accountId,
+      whatsappAccountId: accountId,
+      dbErrorCode: createError.code,
+      errorMessage: createError.message,
+      stack: new Error().stack,
+    })
     return null
   }
 
+  console.log('[webhook] new contact created', {
+    contactId: newContact.id,
+    name: newContact.name,
+    phone: newContact.phone,
+  })
   return { contact: newContact, wasCreated: true }
 }
 
@@ -1034,8 +1111,8 @@ async function findOrCreateConversation(
   accountId: string,
   configOwnerUserId: string,
   contactId: string,
+  message: WhatsAppMessage
 ) {
-  // Look for existing conversation in this account
   const { data: existing, error: findError } = await supabaseAdmin()
     .from('conversations')
     .select('*')
@@ -1047,8 +1124,7 @@ async function findOrCreateConversation(
     return { conversation: existing, created: false }
   }
 
-  // Create new conversation. Same tenancy + audit split as
-  // findOrCreateContact above.
+  // Create new conversation
   const { data: newConv, error: createError } = await supabaseAdmin()
     .from('conversations')
     .insert({
@@ -1060,9 +1136,21 @@ async function findOrCreateConversation(
     .single()
 
   if (createError) {
-    console.error('Error creating conversation:', createError)
+    console.error('[webhook] conversation creation failed', {
+      whatsappMessageId: message.id,
+      senderNumber: contactId,
+      workspaceId: accountId,
+      whatsappAccountId: accountId,
+      dbErrorCode: createError.code,
+      errorMessage: createError.message,
+      stack: new Error().stack,
+    })
     return null
   }
 
+  console.log('[webhook] conversation created', {
+    conversationId: newConv.id,
+    status: newConv.status,
+  })
   return { conversation: newConv, created: true }
 }

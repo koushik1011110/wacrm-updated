@@ -14,6 +14,7 @@ const h = vi.hoisted(() => ({
     claim: true as boolean,
     updatePayload: null as Record<string, unknown> | null,
     rpcCalls: [] as { name: string; args: unknown }[],
+    sentTodayCount: 0,
   },
 }))
 
@@ -26,7 +27,6 @@ vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
       if (table === 'automations') {
-        // .select().eq().eq().in().limit() → active auto-responders
         const chain = {
           select: () => chain,
           eq: () => chain,
@@ -36,11 +36,50 @@ vi.mock('./admin-client', () => ({
         }
         return chain
       }
-      // conversations
+      if (table === 'messages') {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          order: () => chain,
+          limit: () => chain,
+          gte: () =>
+            Promise.resolve({ count: h.state.sentTodayCount, error: null }),
+          single: () =>
+            Promise.resolve({ data: { id: 'msg-1', content_text: 'hi', message_id: 'wamid-1' }, error: null }),
+          maybeSingle: () =>
+            Promise.resolve({ data: { id: 'msg-1', content_text: 'hi', message_id: 'wamid-1' }, error: null }),
+        }
+        return chain
+      }
+      if (table === 'contacts') {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          single: () =>
+            Promise.resolve({ data: { id: 'contact-1', phone: '+123456' }, error: null }),
+        }
+        return chain
+      }
+      if (table === 'conversations') {
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          single: () =>
+            Promise.resolve({ data: h.state.conv, error: null }),
+          update: (payload: Record<string, unknown>) => {
+            h.state.updatePayload = payload
+            return { eq: () => Promise.resolve({ error: null }) }
+          },
+        }
+        return chain
+      }
+      // fallback
       return {
         select: () => ({
           eq: () => ({
             maybeSingle: () =>
+              Promise.resolve({ data: h.state.conv, error: null }),
+            single: () =>
               Promise.resolve({ data: h.state.conv, error: null }),
           }),
         }),
@@ -64,6 +103,7 @@ const ARGS = {
   conversationId: 'conv-1',
   contactId: 'contact-1',
   configOwnerUserId: 'user-1',
+  incomingMessageId: 'msg-1',
 }
 
 function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
@@ -75,6 +115,7 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
     isActive: true,
     autoReplyEnabled: true,
     autoReplyMaxPerConversation: 3,
+    dailyMessageLimit: 50,
     embeddingsApiKey: null,
     ...overrides,
   }
@@ -82,14 +123,18 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
 
 beforeEach(() => {
   h.state.conv = {
+    id: 'conv-1',
     assigned_agent_id: null,
     ai_autoreply_disabled: false,
     ai_reply_count: 0,
+    status: 'open',
+    last_message_at: new Date().toISOString(),
   }
   h.state.autoResponders = []
   h.state.claim = true
   h.state.updatePayload = null
   h.state.rpcCalls = []
+  h.state.sentTodayCount = 0
   h.loadAiConfig.mockResolvedValue(aiConfig())
   h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'hi' }])
   h.retrieveKnowledge.mockResolvedValue([])
@@ -159,7 +204,7 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
 
   it('skips when auto-reply was disabled on this conversation', async () => {
     h.state.conv = {
-      assigned_agent_id: null,
+      assigned_agent_id: 'agent-1',
       ai_autoreply_disabled: true,
       ai_reply_count: 0,
     }
@@ -183,6 +228,12 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(h.generateReply).not.toHaveBeenCalled()
     expect(h.engineSendText).not.toHaveBeenCalled()
   })
+
+  it('skips when the daily messaging limit is reached', async () => {
+    h.state.sentTodayCount = 50
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.engineSendText).not.toHaveBeenCalled()
+  })
 })
 
 describe('dispatchInboundToAiReply — handoff', () => {
@@ -192,5 +243,43 @@ describe('dispatchInboundToAiReply — handoff', () => {
     expect(h.engineSendText).not.toHaveBeenCalled()
     expect(h.state.updatePayload).toEqual({ ai_autoreply_disabled: true })
     expect(h.state.rpcCalls).toHaveLength(0)
+  })
+})
+
+describe('dispatchInboundToAiReply — existing contacts', () => {
+  it('sends an AI auto-reply to an existing contact with previous history and an old closed conversation', async () => {
+    h.state.conv = {
+      id: 'conv-1',
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+      status: 'open',
+      last_message_at: new Date().toISOString(),
+    }
+    h.state.sentTodayCount = 10
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'Hi there!' },
+      { role: 'user', content: 'are you open today?' },
+    ])
+
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.generateReply).toHaveBeenCalled()
+    expect(h.state.rpcCalls).toContainEqual({
+      name: 'claim_ai_reply_slot',
+      args: {
+        conversation_id: 'conv-1',
+        max_replies: 3,
+      },
+    })
+    expect(h.engineSendText).toHaveBeenCalledWith({
+      accountId: 'acct-1',
+      userId: 'user-1',
+      conversationId: 'conv-1',
+      contactId: 'contact-1',
+      text: 'Hello!',
+      isAiReply: true,
+    })
   })
 })

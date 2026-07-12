@@ -43,6 +43,7 @@ interface SendTextEngineArgs {
   conversationId: string
   contactId: string
   text: string
+  isAiReply?: boolean
 }
 
 /**
@@ -120,14 +121,24 @@ export async function engineSendText(
     await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
   }
 
-  const { error: msgErr } = await db.from('messages').insert({
+  let insertPayload: Record<string, unknown> = {
     conversation_id: args.conversationId,
     sender_type: 'bot',
     content_type: 'text',
     content_text: args.text,
     message_id: waMessageId,
     status: 'sent',
-  })
+    is_ai_reply: args.isAiReply ?? false,
+  }
+
+  let { error: msgErr } = await db.from('messages').insert(insertPayload)
+
+  if (msgErr && (msgErr.code === 'PGRST204' || (msgErr.message && msgErr.message.includes('is_ai_reply')))) {
+    delete insertPayload.is_ai_reply
+    const retry = await db.from('messages').insert(insertPayload)
+    msgErr = retry.error
+  }
+
   if (msgErr) {
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)
   }
