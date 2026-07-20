@@ -19,17 +19,30 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
+  applicationName: "KK WABA",
   title: {
-    default: "wacrm",
-    template: "%s — wacrm",
+    default: "KK WABA",
+    template: "%s — KK WABA",
   },
-  description: "Self-hostable CRM template for WhatsApp.",
+  description: "KK WABA — WhatsApp API CRM for conversations, customers, campaigns, and automations.",
+  openGraph: {
+    title: "KK WABA — WhatsApp API CRM",
+    description: "Manage WhatsApp conversations, customers, campaigns, and automations from one focused workspace.",
+    siteName: "KK WABA",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "KK WABA — WhatsApp API CRM",
+    description: "Manage WhatsApp conversations, customers, campaigns, and automations from one focused workspace.",
+  },
   robots: {
-    index: false,
-    follow: false,
+    index: true,
+    follow: true,
   },
   icons: {
-    icon: [{ url: "/icon" }],
+    icon: [{ url: "/icon.png", type: "image/png", sizes: "512x512" }],
+    apple: [{ url: "/icon.png", type: "image/png", sizes: "512x512" }],
   },
   formatDetection: {
     email: false,
@@ -39,7 +52,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#020617",
+  themeColor: "#059669",
   colorScheme: "dark light",
 };
 

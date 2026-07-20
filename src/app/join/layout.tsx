@@ -27,8 +27,11 @@
 
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import Link from 'next/link';
+import { KkWabaLogo } from '@/components/brand/kk-waba-logo';
 
 export const metadata: Metadata = {
+  title: "Join a workspace",
   referrer: 'no-referrer',
   // Belt-and-braces against an invite URL ending up in search
   // results if a join page is ever crawled.
@@ -37,7 +40,10 @@ export const metadata: Metadata = {
 
 export default function JoinLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background px-4 py-8">
+      <Link href="/" aria-label="KK WABA home">
+        <KkWabaLogo priority className="h-12 max-w-[230px]" />
+      </Link>
       {children}
     </div>
   );

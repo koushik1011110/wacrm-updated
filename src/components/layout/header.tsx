@@ -17,6 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ModeToggle } from "@/components/layout/mode-toggle";
+import { KkWabaLogo } from "@/components/brand/kk-waba-logo";
 
 const pageTitles: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -65,6 +66,7 @@ export function Header({ onOpenSidebar }: HeaderProps) {
         >
           <Menu className="h-5 w-5" />
         </button>
+        <KkWabaLogo className="h-7 max-w-[118px] lg:hidden" />
         <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">
           {title}
         </h1>

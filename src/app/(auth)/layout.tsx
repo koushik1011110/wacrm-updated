@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 // signed up. Each page still gets its own <title> via its own
 // metadata.title override below the route group layout.
 export const metadata: Metadata = {
+  title: "Account access",
   robots: {
     index: false,
     follow: false,

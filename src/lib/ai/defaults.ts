@@ -58,7 +58,7 @@ export function buildSystemPrompt(args: {
 }): string {
   const { userPrompt, mode, knowledge } = args
   const parts: string[] = [
-    'You are a customer-messaging assistant for a business that uses a WhatsApp CRM. ' +
+    'You are a customer-messaging assistant for a business that uses KK WABA, a WhatsApp API CRM. ' +
     'You are shown the recent WhatsApp conversation between the business (assistant) and a customer (user). ' +
     'Write the next reply the business should send to the customer.',
     'Guidelines: reply in the same language the customer is writing in; keep it concise and friendly, suitable for WhatsApp; ' +

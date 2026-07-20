@@ -7,6 +7,7 @@ import { DashboardShell } from "./dashboard-shell";
 // this is belt-and-suspenders — but SEO-critical if a URL ever leaks
 // via a link shared externally.
 export const metadata: Metadata = {
+  title: "Dashboard",
   robots: {
     index: false,
     follow: false,
