@@ -9,7 +9,7 @@
  * instead of a runtime rejection from Meta.
  */
 
-const META_API_VERSION = 'v21.0'
+const META_API_VERSION = process.env.META_GRAPH_API_VERSION || 'v21.0'
 const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`
 
 export interface MetaSendResult {
@@ -21,6 +21,7 @@ export interface MetaPhoneInfo {
   display_phone_number: string
   verified_name?: string
   quality_rating?: string
+  status?: string
 }
 
 interface MetaErrorResponse {
@@ -49,13 +50,13 @@ export interface VerifyPhoneNumberArgs {
 
 /**
  * Verify a Meta phone number ID by fetching its public metadata
- * (display_phone_number, verified_name, quality_rating).
+ * (display_phone_number, verified_name, quality_rating, status).
  */
 export async function verifyPhoneNumber(
   args: VerifyPhoneNumberArgs
 ): Promise<MetaPhoneInfo> {
   const { phoneNumberId, accessToken } = args
-  const url = `${META_API_BASE}/${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating`
+  const url = `${META_API_BASE}/${phoneNumberId}?fields=id,display_phone_number,verified_name,quality_rating,status`
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })

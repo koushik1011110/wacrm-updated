@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, type ReactNode } from 'react';
-
+import { useAuth } from '@/hooks/use-auth';
 import { cn } from '@/lib/utils';
 import {
   RAIL_GROUPS,
@@ -15,12 +15,6 @@ import {
 // drives the row→column switch in the markup below — keep the two in sync.
 const RAIL_DESKTOP_MIN_PX = 1024;
 
-/**
- * The settings left rail — grouped, vertical on desktop and a
- * horizontal scroller on narrow screens (mirrors the mockup's ≤920px
- * behaviour). The active item auto-scrolls into view when the rail is
- * horizontal so a deep-linked section is never off-screen.
- */
 export function SettingsRail({
   active,
   onSelect,
@@ -31,6 +25,7 @@ export function SettingsRail({
   hints?: Partial<Record<SettingsSection, ReactNode>>;
 }) {
   const activeRef = useRef<HTMLButtonElement>(null);
+  const { isOwner, isAdmin } = useAuth();
 
   // When horizontal (mobile), keep the active chip in view. On desktop
   // the rail is a static column, so skip.
@@ -68,6 +63,7 @@ export function SettingsRail({
               </div>
             ) : null}
             {items.map((s) => {
+              if (s === 'superadmin' && !isOwner && !isAdmin) return null;
               const meta = SECTION_META[s];
               const Icon = meta.icon;
               const isActive = s === active;
