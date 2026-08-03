@@ -277,3 +277,26 @@ describe('generateReply — Gemini', () => {
     expect(body.contents).toHaveLength(1)
   })
 })
+
+describe('generateReply — DeepSeek', () => {
+  it('calls the chat completions endpoint and returns the reply', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        okResponse({ choices: [{ message: { content: 'DeepSeek response' } }] }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await generateReply({
+      config: config({ provider: 'deepseek', apiKey: 'sk-ds-test', model: 'deepseek-chat' }),
+      systemPrompt: 'sys',
+      messages: [{ role: 'user', content: 'Hi' }],
+    })
+
+    expect(res).toEqual({ text: 'DeepSeek response', handoff: false })
+    const [url, opts] = fetchMock.mock.calls[0]
+    expect(url).toContain('api.deepseek.com')
+    expect(opts.headers.Authorization).toBe('Bearer sk-ds-test')
+  })
+})
+

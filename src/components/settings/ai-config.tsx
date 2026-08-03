@@ -35,12 +35,14 @@ const PROVIDER_LABEL: Record<AiProvider, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic (Claude)',
   gemini: 'Google Gemini',
+  deepseek: 'DeepSeek',
 };
 
 const KEY_PLACEHOLDER: Record<AiProvider, string> = {
   openai: 'sk-...',
   anthropic: 'sk-ant-...',
   gemini: 'AIzaSy...',
+  deepseek: 'sk-...',
 };
 
 export function AiConfig() {
@@ -120,6 +122,7 @@ export function AiConfig() {
       model === AI_PROVIDER_DEFAULT_MODEL.openai ||
       model === AI_PROVIDER_DEFAULT_MODEL.anthropic ||
       model === AI_PROVIDER_DEFAULT_MODEL.gemini ||
+      model === AI_PROVIDER_DEFAULT_MODEL.deepseek ||
       model.trim() === '';
     if (isDefaultModel) setModel(AI_PROVIDER_DEFAULT_MODEL[next]);
   };
@@ -233,7 +236,7 @@ export function AiConfig() {
     <div>
       <SettingsPanelHead
         title="Agent setup"
-        description="Bring your own OpenAI, Anthropic, or Google Gemini key. KK WABA calls the provider directly with your key — no per-seat AI fees, and your data stays yours. This powers AI-drafted replies in the inbox, the auto-reply bot, and the Playground."
+        description="Bring your own OpenAI, Anthropic, Google Gemini, or DeepSeek key. KK WABA calls the provider directly with your key — no per-seat AI fees, and your data stays yours. This powers AI-drafted replies in the inbox, the auto-reply bot, and the Playground."
       />
 
       {!canEdit && (
@@ -272,6 +275,9 @@ export function AiConfig() {
                     </SelectItem>
                     <SelectItem value="gemini">
                       {PROVIDER_LABEL.gemini}
+                    </SelectItem>
+                    <SelectItem value="deepseek">
+                      {PROVIDER_LABEL.deepseek}
                     </SelectItem>
                   </SelectContent>
                 </Select>

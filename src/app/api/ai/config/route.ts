@@ -75,6 +75,9 @@ export async function GET() {
     if (model.startsWith('gemini:')) {
       provider = 'gemini'
       model = model.slice('gemini:'.length)
+    } else if (model.startsWith('deepseek:')) {
+      provider = 'deepseek'
+      model = model.slice('deepseek:'.length)
     }
     return NextResponse.json({
       configured: true,
@@ -109,8 +112,8 @@ export async function POST(request: Request) {
     if (!body || typeof body !== 'object') return bad('Invalid request body')
 
     const provider = body.provider as AiProvider
-    if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'gemini') {
-      return bad('provider must be "openai", "anthropic" or "gemini"')
+    if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'gemini' && provider !== 'deepseek') {
+      return bad('provider must be "openai", "anthropic", "gemini" or "deepseek"')
     }
     const model = typeof body.model === 'string' ? body.model.trim() : ''
     if (!model) return bad('model is required')
@@ -170,6 +173,9 @@ export async function POST(request: Request) {
     if (existingModel?.startsWith('gemini:')) {
       existingProvider = 'gemini'
       existingModel = existingModel.slice('gemini:'.length)
+    } else if (existingModel?.startsWith('deepseek:')) {
+      existingProvider = 'deepseek'
+      existingModel = existingModel.slice('deepseek:'.length)
     }
 
     const credentialsChanged =
@@ -295,9 +301,9 @@ export async function POST(request: Request) {
     let saveErr = saveRes.error
 
     if (saveErr && saveErr.code === '23514' && !saveErr.message.includes('auto_reply_max_per_conversation_check')) {
-      // Fallback for database check constraint limitations: store gemini under openai with prefix
+      // Fallback for database check constraint limitations: store provider under openai with prefix
       const fallbackProvider = 'openai'
-      const fallbackModel = `gemini:${model}`
+      const fallbackModel = `${provider}:${model}`
       saveRes = await runSave(fallbackProvider, fallbackModel)
       saveErr = saveRes.error
     }
