@@ -9,6 +9,7 @@ import { engineSendText } from '@/lib/flows/meta-send'
 import { startOfLocalDay } from '@/lib/dashboard/date-utils'
 import { AiConfig } from './types'
 import { trackAiTokenUsage } from './token-tracker'
+import { processBookingFlow } from '@/lib/booking/flow'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -238,6 +239,31 @@ export async function dispatchInboundToAiReply(
         messageId: incomingMessage.id,
       })
       return
+    }
+
+    // Check for active or new Booking Flow intent
+    if (incomingMessage?.content_text) {
+      const bookingState = await processBookingFlow(
+        db,
+        accountId,
+        conversation.id,
+        contact.id,
+        incomingMessage.content_text,
+        configOwnerUserId
+      );
+
+      if (bookingState.isBookingFlow && bookingState.replyText) {
+        console.log('[booking flow] Sending structured booking step reply to customer');
+        await engineSendText({
+          accountId,
+          userId: configOwnerUserId,
+          conversationId: conversation.id,
+          contactId: contact.id,
+          text: bookingState.replyText,
+          isAiReply: true,
+        });
+        return;
+      }
     }
 
     console.log(`[ai auto-reply] contact ID: ${contact.id}, conversation ID: ${conversation.id}`)
