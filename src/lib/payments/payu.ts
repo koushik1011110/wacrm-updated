@@ -9,6 +9,9 @@ interface CreatePayUParams {
   phone: string;
   surl?: string;
   furl?: string;
+  merchantKey?: string;
+  merchantSalt?: string;
+  payuEnv?: string;
 }
 
 export interface PayUFormData {
@@ -28,8 +31,8 @@ export interface PayUFormData {
 /**
  * Get PayU API Gateway URL (Test or Production).
  */
-export function getPayUBaseUrl(): string {
-  const env = (process.env.PAYU_ENV || 'TEST').toUpperCase().trim();
+export function getPayUBaseUrl(payuEnv?: string): string {
+  const env = (payuEnv || process.env.PAYU_ENV || 'TEST').toUpperCase().trim();
   return env === 'PROD' || env === 'PRODUCTION'
     ? 'https://secure.payu.in/_payment'
     : 'https://test.payu.in/_payment';
@@ -91,9 +94,9 @@ export function createPayUPaymentDetails(params: CreatePayUParams): {
   paymentLink: string;
   formData: PayUFormData;
 } {
-  const key = (process.env.PAYU_MERCHANT_KEY || 'GTK32n').trim();
-  const salt = (process.env.PAYU_MERCHANT_SALT || 'eCwTWDSE').trim();
-  const action = getPayUBaseUrl();
+  const key = (params.merchantKey || process.env.PAYU_MERCHANT_KEY || 'GTK32n').trim();
+  const salt = (params.merchantSalt || process.env.PAYU_MERCHANT_SALT || 'eCwTWDSE').trim();
+  const action = getPayUBaseUrl(params.payuEnv);
   const siteUrl = getSiteUrl();
 
   const amountStr = Math.round(params.amount).toFixed(2);

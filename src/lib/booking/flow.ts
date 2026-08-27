@@ -7,18 +7,41 @@ export interface BookingState {
   bookingId?: string;
   replyText?: string;
   paymentLink?: string;
+  slotSections?: any[];
+}
+
+function generateDateSlotSections(configuredSlots?: string[]) {
+  const slotsToUse =
+    configuredSlots && configuredSlots.length > 0
+      ? configuredSlots
+      : ['Today 4:00 PM', 'Tomorrow 11:00 AM', 'Tomorrow 4:00 PM', 'Day After 11:00 AM', 'Day After 4:00 PM'];
+
+  const rows = slotsToUse.slice(0, 10).map((slotText, idx) => {
+    const cleanTitle = slotText.slice(0, 24);
+    return {
+      id: `slot_${idx + 1}`,
+      title: cleanTitle,
+      description: 'Available Time Slot',
+    };
+  });
+
+  return [
+    {
+      title: 'Available Slots',
+      rows,
+    },
+  ];
 }
 
 /**
  * Detects if the incoming message expresses an explicit booking / appointment reservation intent.
- * Ignores casual uses of the word 'book' in normal text.
+ * Ignores casual mentions of the word 'book'.
  */
 export function isBookingIntent(text: string): boolean {
   if (!text || typeof text !== 'string') return false;
 
   const lower = text.toLowerCase().trim();
 
-  // Negative patterns (casual mentions)
   if (
     lower.includes('reading a book') ||
     lower.includes('good book') ||
@@ -30,7 +53,6 @@ export function isBookingIntent(text: string): boolean {
     return false;
   }
 
-  // Explicit booking patterns
   const bookingPatterns = [
     /\b(want|like|need|can i|please)\s+(to\s+)?(book|reserve|schedule)\b/i,
     /\b(book|booking|reserve|reservation|appointment|slot)\s+(a\s+)?(table|room|slot|appointment|service|seat|visit)\b/i,
@@ -45,7 +67,7 @@ export function isBookingIntent(text: string): boolean {
 
 /**
  * Handles the step-by-step Booking Flow state machine:
- * Name -> Phone -> Date & Time -> PayU Payment Link
+ * Name -> Phone -> Date & Time (Interactive List) -> PayU Payment Link
  */
 export async function processBookingFlow(
   db: SupabaseClient,
@@ -55,7 +77,6 @@ export async function processBookingFlow(
   customerMessage: string,
   configOwnerUserId: string
 ): Promise<BookingState> {
-  // Fetch conversation to check existing booking state
   const { data: conv } = await db
     .from('conversations')
     .select('id, current_booking_id, booking_step')
@@ -65,13 +86,19 @@ export async function processBookingFlow(
   let bookingId = conv?.current_booking_id;
   let currentStep = conv?.booking_step;
 
-  // 1. If not currently in a booking flow, check if message is a booking intent
   if (!bookingId || !currentStep) {
     if (!isBookingIntent(customerMessage)) {
       return { isBookingFlow: false };
     }
 
-    // Start new booking
+    const { data: acc } = await db
+      .from('accounts')
+      .select('default_booking_advance_amount')
+      .eq('id', accountId)
+      .maybeSingle();
+
+    const configuredAdvance = Number(acc?.default_booking_advance_amount ?? 500.0);
+
     const { data: newBooking, error: createErr } = await db
       .from('bookings')
       .insert({
@@ -79,7 +106,7 @@ export async function processBookingFlow(
         contact_id: contactId,
         conversation_id: conversationId,
         status: 'pending_details',
-        advance_amount: 1.0,
+        advance_amount: configuredAdvance,
       })
       .select('id')
       .single();
@@ -92,7 +119,6 @@ export async function processBookingFlow(
     bookingId = newBooking.id;
     currentStep = 'name';
 
-    // Update conversation with active booking step
     await db
       .from('conversations')
       .update({ current_booking_id: bookingId, booking_step: 'name' })
@@ -107,7 +133,6 @@ export async function processBookingFlow(
     };
   }
 
-  // 2. State Machine Steps
   if (currentStep === 'name') {
     const customerName = customerMessage.trim();
 
@@ -142,19 +167,45 @@ export async function processBookingFlow(
       .update({ booking_step: 'datetime' })
       .eq('id', conversationId);
 
+    // Fetch custom time slots for this account
+    const { data: acc } = await db
+      .from('accounts')
+      .select('booking_time_slots')
+      .eq('id', accountId)
+      .maybeSingle();
+
+    const customSlots = Array.isArray(acc?.booking_time_slots) ? acc.booking_time_slots : undefined;
+
     return {
       isBookingFlow: true,
       step: 'datetime',
       bookingId,
-      replyText:
-        'Great! Now please share your preferred **Date and Time** for the booking (e.g. *Tomorrow at 4:00 PM* or *29th Aug, 11:30 AM*):',
+      replyText: 'Great! Please select your preferred **Date & Time Slot** from the list below:',
+      slotSections: generateDateSlotSections(customSlots),
     };
   }
 
   if (currentStep === 'datetime') {
-    const dateTimeText = customerMessage.trim();
+    let dateTimeText = customerMessage.trim();
 
-    // Fetch booking details so far
+    // Fetch custom time slots to map slot_1, slot_2... to exact slot text
+    const { data: accConfig } = await db
+      .from('accounts')
+      .select('payu_merchant_key, payu_merchant_salt, payu_env, booking_time_slots')
+      .eq('id', accountId)
+      .maybeSingle();
+
+    const customSlots: string[] = Array.isArray(accConfig?.booking_time_slots)
+      ? accConfig.booking_time_slots
+      : ['Today 4:00 PM', 'Tomorrow 11:00 AM', 'Tomorrow 4:00 PM', 'Day After 11:00 AM', 'Day After 4:00 PM'];
+
+    if (dateTimeText.startsWith('slot_')) {
+      const idx = parseInt(dateTimeText.replace('slot_', ''), 10) - 1;
+      if (customSlots[idx]) {
+        dateTimeText = customSlots[idx];
+      }
+    }
+
     const { data: booking } = await db
       .from('bookings')
       .select('*')
@@ -165,13 +216,11 @@ export async function processBookingFlow(
       return { isBookingFlow: false };
     }
 
-    // Unique Transaction / Order ID per attempt
     const txnid = `BK_${Date.now().toString().slice(-6)}_${Math.random().toString(36).slice(-4)}`;
     const advanceAmount = Number(booking.advance_amount || 1);
 
     let paymentLink = '';
     try {
-      // Create PayU Payment Details & Hosted Checkout Link
       const payuOrder = createPayUPaymentDetails({
         txnid,
         amount: advanceAmount,
@@ -179,6 +228,9 @@ export async function processBookingFlow(
         firstname: booking.customer_name || 'Customer',
         phone: booking.customer_phone || '9876543210',
         email: 'customer@gmail.com',
+        merchantKey: accConfig?.payu_merchant_key || undefined,
+        merchantSalt: accConfig?.payu_merchant_salt || undefined,
+        payuEnv: accConfig?.payu_env || undefined,
       });
       paymentLink = payuOrder.paymentLink;
     } catch (err: any) {
@@ -187,7 +239,6 @@ export async function processBookingFlow(
       paymentLink = `${siteUrl}/payu-checkout?txnid=${txnid}&amount=${advanceAmount}`;
     }
 
-    // Update booking with payment info & txnid
     await db
       .from('bookings')
       .update({
@@ -210,9 +261,7 @@ export async function processBookingFlow(
       `📞 **Phone:** ${booking.customer_phone}\n` +
       `📅 **Slot:** ${dateTimeText}\n` +
       `💳 **Advance Fee:** ₹${advanceAmount}\n\n` +
-      `To confirm and complete your booking, please pay the advance amount using the PayU Payment Link below:\n` +
-      `👉 ${paymentLink}\n\n` +
-      `Once payment is complete, your booking will be confirmed automatically! 🎉`;
+      `To confirm and complete your booking, please pay the advance amount using the PayU Payment Link below:`;
 
     return {
       isBookingFlow: true,
@@ -223,8 +272,29 @@ export async function processBookingFlow(
     };
   }
 
-  // If already at payment step and customer sends message before paying
   if (currentStep === 'payment') {
+    const lowerMsg = customerMessage.toLowerCase().trim();
+
+    // Check if the message is explicitly asking for payment/link details
+    const isPaymentQuery =
+      lowerMsg.includes('pay') ||
+      lowerMsg.includes('payment') ||
+      lowerMsg.includes('link') ||
+      lowerMsg.includes('upi') ||
+      lowerMsg.includes('qr') ||
+      lowerMsg.includes('gpay') ||
+      lowerMsg.includes('phonepe') ||
+      lowerMsg.includes('card') ||
+      lowerMsg.includes('paise') ||
+      lowerMsg.includes('send link') ||
+      lowerMsg.includes('dobara send');
+
+    // If customer asks a general question (address, price, services, etc.),
+    // allow AI auto-reply to answer naturally without nagging for payment!
+    if (!isPaymentQuery) {
+      return { isBookingFlow: false };
+    }
+
     const { data: booking } = await db
       .from('bookings')
       .select('*')
@@ -232,7 +302,6 @@ export async function processBookingFlow(
       .single();
 
     if (booking?.status === 'confirmed') {
-      // Reset booking flow on conversation
       await db
         .from('conversations')
         .update({ current_booking_id: null, booking_step: null })
@@ -242,7 +311,6 @@ export async function processBookingFlow(
 
     let paymentLink = booking?.payment_link || '';
 
-    // If existing paymentLink is missing, broken, or contains old Cashfree link, regenerate with PayU
     if (!paymentLink || paymentLink.includes('cashfree') || paymentLink.includes('order/#')) {
       const txnid = `BK_${Date.now().toString().slice(-6)}_${Math.random().toString(36).slice(-4)}`;
       try {
@@ -270,7 +338,8 @@ export async function processBookingFlow(
       bookingId,
       replyText:
         `Your booking is pending advance payment (₹${booking?.advance_amount || 1}).\n\n` +
-        `Please complete payment via PayU to finalize your slot:\n👉 ${paymentLink}`,
+        `Please complete payment via PayU to finalize your slot:`,
+      paymentLink,
     };
   }
 

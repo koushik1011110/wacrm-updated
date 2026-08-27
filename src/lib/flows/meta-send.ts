@@ -1,5 +1,7 @@
 import {
+  markMessageAsRead,
   sendInteractiveButtons,
+  sendInteractiveCtaUrl,
   sendInteractiveList,
   sendMediaMessage,
   sendTextMessage,
@@ -442,4 +444,123 @@ async function sendInteractiveViaMeta(
     .eq('id', input.conversationId)
 
   return { whatsapp_message_id: waMessageId }
+}
+
+export interface SendCtaUrlEngineArgs {
+  accountId: string
+  userId: string
+  conversationId: string
+  contactId: string
+  bodyText: string
+  buttonLabel: string
+  url: string
+  headerText?: string
+  footerText?: string
+  isAiReply?: boolean
+}
+
+/**
+ * Send an interactive WhatsApp Call-To-Action (CTA) URL Button message.
+ */
+export async function engineSendCtaUrl(
+  input: SendCtaUrlEngineArgs,
+): Promise<{ whatsapp_message_id: string }> {
+  const db = supabaseAdmin()
+
+  const { data: contact, error: contactErr } = await db
+    .from('contacts')
+    .select('id, phone')
+    .eq('id', input.contactId)
+    .eq('account_id', input.accountId)
+    .maybeSingle()
+  if (contactErr || !contact?.phone) {
+    throw new Error('contact not found for this account')
+  }
+
+  const sanitized = sanitizePhoneForMeta(contact.phone)
+  if (!isValidE164(sanitized)) {
+    throw new Error(`contact phone invalid: ${contact.phone}`)
+  }
+
+  const { data: config, error: configErr } = await db
+    .from('whatsapp_config')
+    .select('*')
+    .eq('account_id', input.accountId)
+    .single()
+  if (configErr || !config) {
+    throw new Error('WhatsApp not configured for this account')
+  }
+
+  const accessToken = decrypt(config.access_token)
+
+  const attempt = async (phone: string): Promise<string> => {
+    const r = await sendInteractiveCtaUrl({
+      phoneNumberId: config.phone_number_id,
+      accessToken,
+      to: phone,
+      bodyText: input.bodyText,
+      buttonLabel: input.buttonLabel,
+      url: input.url,
+      headerText: input.headerText,
+      footerText: input.footerText,
+    })
+    return r.messageId
+  }
+
+  const variants = phoneVariants(sanitized)
+  let workingPhone = sanitized
+  let waMessageId = ''
+  let lastError: unknown = null
+  for (const v of variants) {
+    try {
+      waMessageId = await attempt(v)
+      workingPhone = v
+      lastError = null
+      break
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!isRecipientNotAllowedError(msg)) throw err
+      lastError = err
+    }
+  }
+  if (lastError) throw lastError
+
+  if (workingPhone !== sanitized) {
+    await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
+  }
+
+  await db.from('messages').insert({
+    conversation_id: input.conversationId,
+    sender_type: 'bot',
+    content_type: 'interactive',
+    content_text: `${input.bodyText}\n\n👉 [${input.buttonLabel}]: ${input.url}`,
+    message_id: waMessageId,
+    status: 'sent',
+    is_ai_reply: input.isAiReply ?? false,
+  })
+
+  await db
+    .from('conversations')
+    .update({
+      last_message_text: input.bodyText,
+      last_message_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', input.conversationId)
+
+  return { whatsapp_message_id: waMessageId }
+}
+
+export async function engineMarkMessageAsRead(input: {
+  accountId: string
+  metaMessageId: string
+}): Promise<boolean> {
+  if (!input.metaMessageId) return false
+  const cfg = await resolveAccountConfig(input.accountId)
+  if (!cfg) return false
+  return markMessageAsRead({
+    phoneNumberId: cfg.phoneNumberId,
+    accessToken: cfg.accessToken,
+    messageId: input.metaMessageId,
+  })
 }

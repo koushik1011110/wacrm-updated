@@ -5,7 +5,7 @@ import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { latestUserMessage } from './query'
-import { engineSendText } from '@/lib/flows/meta-send'
+import { engineSendText, engineSendCtaUrl, engineSendInteractiveList, engineMarkMessageAsRead } from '@/lib/flows/meta-send'
 import { startOfLocalDay } from '@/lib/dashboard/date-utils'
 import { AiConfig } from './types'
 import { trackAiTokenUsage } from './token-tracker'
@@ -241,6 +241,17 @@ export async function dispatchInboundToAiReply(
       return
     }
 
+    // Mark incoming customer message as READ (blue ticks on WhatsApp)
+    if (incomingMessage?.message_id) {
+      await engineMarkMessageAsRead({
+        accountId,
+        metaMessageId: incomingMessage.message_id,
+      }).catch((err) => console.warn('[auto-reply] mark read error:', err));
+    }
+
+    // Simulate natural human typing pause (1.8s) so replies do not feel robotic
+    await new Promise((resolve) => setTimeout(resolve, 1800));
+
     // Check for active or new Booking Flow intent
     if (incomingMessage?.content_text) {
       const bookingState = await processBookingFlow(
@@ -254,6 +265,48 @@ export async function dispatchInboundToAiReply(
 
       if (bookingState.isBookingFlow && bookingState.replyText) {
         console.log('[booking flow] Sending structured booking step reply to customer');
+
+        if (bookingState.step === 'datetime' && bookingState.slotSections) {
+          try {
+            console.log('[booking flow] Sending WhatsApp Interactive List for Date & Slot selection...');
+            await engineSendInteractiveList({
+              accountId,
+              userId: configOwnerUserId,
+              conversationId: conversation.id,
+              contactId: contact.id,
+              headerText: '📅 Appointment Booking',
+              bodyText: 'Please tap the button below to select your preferred booking slot:',
+              buttonLabel: 'Select Time Slot',
+              footerText: 'Choose from available slots',
+              sections: bookingState.slotSections,
+            });
+            console.log('[booking flow] WhatsApp Interactive List successfully sent!');
+            return;
+          } catch (listErr) {
+            console.error('[booking flow] Interactive list send error:', listErr);
+          }
+        }
+
+        if (bookingState.step === 'payment' && bookingState.paymentLink) {
+          try {
+            await engineSendCtaUrl({
+              accountId,
+              userId: configOwnerUserId,
+              conversationId: conversation.id,
+              contactId: contact.id,
+              headerText: '📅 Booking Payment',
+              bodyText: bookingState.replyText,
+              buttonLabel: '💳 Pay ₹1.00 Now',
+              url: bookingState.paymentLink,
+              footerText: 'Instant Confirmation via PayU',
+              isAiReply: true,
+            });
+            return;
+          } catch (ctaErr) {
+            console.warn('[booking flow] Interactive CTA send error, falling back to text:', ctaErr);
+          }
+        }
+
         await engineSendText({
           accountId,
           userId: configOwnerUserId,

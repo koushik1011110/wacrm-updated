@@ -260,6 +260,43 @@ export async function sendTextMessage(
   return { messageId: data.messages[0].id }
 }
 
+export interface MarkMessageAsReadArgs {
+  phoneNumberId: string
+  accessToken: string
+  messageId: string
+}
+
+/**
+ * Mark an incoming customer message as 'read' in WhatsApp Cloud API (blue ticks).
+ */
+export async function markMessageAsRead(
+  args: MarkMessageAsReadArgs
+): Promise<boolean> {
+  const { phoneNumberId, accessToken, messageId } = args
+  if (!messageId) return false
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        status: 'read',
+        message_id: messageId,
+      }),
+    })
+    console.log('[meta api] markMessageAsRead status:', response.status, 'ok:', response.ok)
+    return response.ok
+  } catch (err) {
+    console.error('[meta api] markMessageAsRead exception:', err)
+    return false
+  }
+}
+
 export type MediaKind = 'image' | 'video' | 'document' | 'audio'
 
 export interface SendMediaMessageArgs {
@@ -1035,3 +1072,81 @@ export async function downloadMedia(
   const buffer = Buffer.from(await response.arrayBuffer())
   return { buffer, contentType }
 }
+
+export interface SendInteractiveCtaUrlArgs {
+  phoneNumberId: string
+  accessToken: string
+  to: string
+  bodyText: string
+  buttonLabel: string
+  url: string
+  headerText?: string
+  footerText?: string
+  contextMessageId?: string
+}
+
+/**
+ * Send an interactive WhatsApp Call-To-Action (CTA) URL Button message.
+ * Displays a clean card with a prominent native button linking to a URL.
+ */
+export async function sendInteractiveCtaUrl(
+  args: SendInteractiveCtaUrlArgs
+): Promise<MetaSendResult> {
+  const {
+    phoneNumberId,
+    accessToken,
+    to,
+    bodyText,
+    buttonLabel,
+    url: ctaUrl,
+    headerText,
+    footerText,
+    contextMessageId,
+  } = args
+
+  validateInteractiveBody(bodyText)
+  validateInteractiveHeaderFooter(headerText, footerText)
+  if (!buttonLabel) throw new Error('CTA URL button requires a buttonLabel.')
+  if (!ctaUrl) throw new Error('CTA URL button requires a url.')
+
+  const interactive: Record<string, unknown> = {
+    type: 'cta_url',
+    body: { text: bodyText },
+    action: {
+      name: 'cta_url',
+      parameters: {
+        display_text: buttonLabel,
+        url: ctaUrl,
+      },
+    },
+  }
+
+  if (headerText) interactive.header = { type: 'text', text: headerText }
+  if (footerText) interactive.footer = { text: footerText }
+
+  const body: Record<string, unknown> = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive,
+  }
+  if (contextMessageId) body.context = { message_id: contextMessageId }
+
+  const url = `${META_API_BASE}/${phoneNumberId}/messages`
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  return { messageId: data.messages[0].id }
+}
+

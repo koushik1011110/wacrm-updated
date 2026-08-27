@@ -13,7 +13,6 @@ function PayUCheckoutInner() {
   const productinfo = searchParams.get('productinfo') || 'Advance Booking Fee';
 
   const [loading, setLoading] = useState(false);
-  const [simulating, setSimulating] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,36 +50,6 @@ function PayUCheckoutInner() {
   const handlePayUGatewaySubmit = () => {
     if (formRef.current) {
       formRef.current.submit();
-    }
-  };
-
-  const simulateSuccessPayment = async () => {
-    if (!txnid) return;
-    setSimulating(true);
-    try {
-      const res = await fetch('/api/payments/payu/callback', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          status: 'success',
-          txnid: txnid,
-          amount: amount,
-          productinfo: productinfo,
-          firstname: firstname,
-          email: 'customer@gmail.com',
-          mihpayid: `PAYU_SIM_${Date.now()}`,
-        }).toString(),
-      });
-
-      if (res.ok) {
-        setSuccess(true);
-      } else {
-        setError('Payment simulation failed.');
-      }
-    } catch {
-      setError('Network error during simulation.');
-    } finally {
-      setSimulating(false);
     }
   };
 
@@ -175,16 +144,6 @@ function PayUCheckoutInner() {
                 <CreditCard className="h-4 w-4" /> Pay via PayU Gateway <ArrowRight className="h-4 w-4" />
               </>
             )}
-          </Button>
-
-          <Button
-            onClick={simulateSuccessPayment}
-            disabled={simulating}
-            variant="outline"
-            className="w-full h-11 text-sm font-semibold border-primary/40 text-primary hover:bg-primary/10 gap-2"
-          >
-            {simulating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            Simulate Instant Test Payment (Success)
           </Button>
         </div>
 
