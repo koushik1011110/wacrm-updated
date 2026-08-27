@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { SettingsPanelHead } from './settings-panel-head';
 import { loadFacebookSDK } from '@/lib/whatsapp/facebook-sdk';
+import { SuperadminAiBillingCard } from './superadmin-ai-billing';
 
 interface SuperadminConfigData {
   META_APP_ID: string;
@@ -190,9 +191,11 @@ export function SuperadminConfig() {
   return (
     <section className="animate-in fade-in-50 duration-200 space-y-6">
       <SettingsPanelHead
-        title="Superadmin Meta Configuration"
-        description="View and verify CRM-wide Meta App and WhatsApp configuration variables."
+        title="Superadmin Configuration"
+        description="View and verify CRM-wide Meta App variables, WhatsApp setup, and AI token pricing/balances."
       />
+
+      <SuperadminAiBillingCard />
 
       <div className="grid gap-6 md:grid-cols-[1fr_360px]">
         {/* Environment status details */}

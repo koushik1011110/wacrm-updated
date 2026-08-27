@@ -8,6 +8,7 @@ import { generateReply } from '@/lib/ai/generate'
 import { buildSystemPrompt } from '@/lib/ai/defaults'
 import { latestUserMessage } from '@/lib/ai/query'
 import { AiError } from '@/lib/ai/types'
+import { trackAiTokenUsage } from '@/lib/ai/token-tracker'
 
 /**
  * POST /api/ai/draft  (agent+)
@@ -103,6 +104,18 @@ export async function POST(request: Request) {
     })
 
     const { text } = await generateReply({ config, systemPrompt, messages })
+
+    // Log token usage & deduct cost from account balance
+    await trackAiTokenUsage(
+      supabase,
+      accountId,
+      userId,
+      config.provider,
+      config.model,
+      systemPrompt,
+      text,
+    )
+
     return NextResponse.json({ draft: text })
   } catch (err) {
     if (err instanceof AiError) {

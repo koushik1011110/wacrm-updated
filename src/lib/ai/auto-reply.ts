@@ -8,6 +8,7 @@ import { latestUserMessage } from './query'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { startOfLocalDay } from '@/lib/dashboard/date-utils'
 import { AiConfig } from './types'
+import { trackAiTokenUsage } from './token-tracker'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -270,6 +271,16 @@ export async function dispatchInboundToAiReply(
 
     if (text) {
       console.log('[webhook] AI reply generated', { text })
+      // Track AI token usage & deduct cost from account balance
+      await trackAiTokenUsage(
+        db,
+        accountId,
+        configOwnerUserId,
+        config.provider,
+        config.model,
+        systemPrompt,
+        text,
+      )
     }
 
     if (handoff || !text) {

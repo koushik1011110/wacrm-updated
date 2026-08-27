@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/select';
 import { SettingsPanelHead } from './settings-panel-head';
 import { AiKnowledgeCard } from './ai-knowledge';
+import { AiUsageCard } from './ai-usage-card';
 import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
 import type { AiProvider } from '@/lib/ai/types';
 
@@ -487,6 +488,8 @@ export function AiConfig() {
             </div>
           </CardContent>
         </Card>
+
+        <AiUsageCard />
 
         <AiKnowledgeCard
           accountId={accountId}

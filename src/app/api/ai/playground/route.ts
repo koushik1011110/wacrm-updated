@@ -7,6 +7,7 @@ import { generateReply } from '@/lib/ai/generate'
 import { buildSystemPrompt } from '@/lib/ai/defaults'
 import { latestUserMessage } from '@/lib/ai/query'
 import { AiError, type ChatMessage } from '@/lib/ai/types'
+import { trackAiTokenUsage } from '@/lib/ai/token-tracker'
 
 // Keep the tested transcript bounded, mirroring the live context window.
 const MAX_TURNS = 20
@@ -85,6 +86,18 @@ export async function POST(request: Request) {
     })
 
     const { text, handoff } = await generateReply({ config, systemPrompt, messages })
+
+    // Track AI token usage & deduct cost
+    await trackAiTokenUsage(
+      supabase,
+      accountId,
+      userId,
+      config.provider,
+      config.model,
+      systemPrompt,
+      text,
+    )
+
     return NextResponse.json({ reply: text, handoff })
   } catch (err) {
     if (err instanceof AiError) {
