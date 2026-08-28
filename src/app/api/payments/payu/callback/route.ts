@@ -46,6 +46,77 @@ export async function POST(request: Request) {
       return NextResponse.redirect(`${siteUrl}/bookings?payment_error=missing_txnid`, { status: 303 });
     }
 
+    const productinfo = bodyData.productinfo || '';
+
+    // Check if this is a SaaS Subscription payment callback
+    const isSubscriptionPayment = txnid.startsWith('SUB_') || productinfo.startsWith('SUB|');
+
+    if (isSubscriptionPayment) {
+      const isSuccess =
+        status === 'success' ||
+        status === 'paid' ||
+        status === 'completed' ||
+        bodyData.unmappedstatus === 'captured';
+
+      if (isSuccess) {
+        // Parse accountId and coupon code from productinfo (Format: SUB|ACCOUNT_ID|COUPON_CODE)
+        const parts = productinfo.split('|');
+        const accountId = parts[1] || '';
+        const couponCode = parts[2] && parts[2] !== 'NONE' ? parts[2] : null;
+        const amountPaid = Number(bodyData.amount || 0);
+
+        if (accountId) {
+          const expiresAt = new Date();
+          expiresAt.setDate(expiresAt.getDate() + 30);
+
+          // Deactivate older active subscriptions
+          await db
+            .from('subscriptions')
+            .update({ status: 'canceled', updated_at: new Date().toISOString() })
+            .eq('account_id', accountId)
+            .eq('status', 'active');
+
+          // Create active 30-day Pro subscription
+          await db.from('subscriptions').insert({
+            account_id: accountId,
+            plan_type: 'pro',
+            status: 'active',
+            starts_at: new Date().toISOString(),
+            expires_at: expiresAt.toISOString(),
+            payment_txn_id: String(mihpayid || txnid),
+            is_free_grant: false,
+            applied_coupon_code: couponCode,
+            amount_paid_inr: amountPaid,
+          });
+
+          // If coupon code applied, update coupon usage
+          if (couponCode) {
+            const { data: cpn } = await db
+              .from('coupons')
+              .select('id, used_count')
+              .eq('code', couponCode)
+              .maybeSingle();
+
+            if (cpn) {
+              await db.from('coupon_usages').insert({
+                coupon_id: cpn.id,
+                account_id: accountId,
+              });
+
+              await db
+                .from('coupons')
+                .update({ used_count: (cpn.used_count || 0) + 1 })
+                .eq('id', cpn.id);
+            }
+          }
+        }
+
+        return NextResponse.redirect(`${siteUrl}/billing?subscription_success=true`, { status: 303 });
+      }
+
+      return NextResponse.redirect(`${siteUrl}/billing?subscription_error=${encodeURIComponent(status || 'failed')}`, { status: 303 });
+    }
+
     // 1. Query by cashfree_order_id = txnid
     let { data: booking } = await db
       .from('bookings')

@@ -105,6 +105,7 @@ const navItems: NavItem[] = [
 ];
 
 const bottomNavItems = [
+  { href: "/billing", label: "Billing & Subscription", icon: Crown },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

@@ -35,7 +35,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { supabase, accountRole } = await requireRole('admin');
+    const { supabase } = await requireRole('admin');
     const body = await request.json().catch(() => ({}));
 
     if (body.action === 'set_rate') {

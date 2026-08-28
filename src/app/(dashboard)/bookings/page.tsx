@@ -30,6 +30,7 @@ import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PayUConfig } from '@/components/settings/payu-config';
 import { BookingCalendar } from '@/components/bookings/booking-calendar';
+import { SubscriptionGate } from '@/components/subscription/subscription-gate';
 import { toast } from 'sonner';
 
 interface Booking {
@@ -225,26 +226,30 @@ export default function BookingsPage() {
   });
 
   return (
-    <div className="min-h-screen bg-background p-4 sm:p-8 space-y-6 max-w-7xl mx-auto">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border pb-5">
-        <div>
-          <div className="flex items-center gap-2">
-            <CalendarCheck className="h-6 w-6 text-primary" />
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">AI Booking Hub & Management</h1>
+    <SubscriptionGate
+      featureName="WhatsApp Booking System"
+      featureDescription="Automated slot selection and PayU advance payment collections require an active Pro subscription or free coupon grant."
+    >
+      <div className="min-h-screen bg-background p-4 sm:p-8 space-y-6 max-w-7xl mx-auto">
+        {/* Page Header */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-border pb-5">
+          <div>
+            <div className="flex items-center gap-2">
+              <CalendarCheck className="h-6 w-6 text-primary" />
+              <h1 className="text-2xl font-bold tracking-tight text-foreground">AI Booking Hub & Management</h1>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Monitor WhatsApp AI customer appointments, advance payments, and gateway settings.
+            </p>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Monitor WhatsApp AI customer appointments, advance payments, and gateway settings.
-          </p>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={fetchBookings} disabled={loading} className="h-9 gap-1.5 text-xs">
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={fetchBookings} disabled={loading} className="h-9 gap-1.5 text-xs">
+              <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
-      </div>
 
       {/* Main Tabs Navigation */}
       <Tabs defaultValue="monitor" value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full space-y-6">
@@ -449,11 +454,11 @@ export default function BookingsPage() {
                                 <td className="p-3 text-right">
                                   <div className="flex items-center justify-end gap-2">
                                     {b.conversation_id && (
-                                      <Button variant="ghost" size="sm" asChild className="h-8 gap-1 text-xs">
-                                        <Link href={`/inbox?conversation=${b.conversation_id}`}>
+                                      <Link href={`/inbox?conversation=${b.conversation_id}`}>
+                                        <Button variant="ghost" size="sm" className="h-8 gap-1 text-xs">
                                           <MessageSquare className="h-3.5 w-3.5 text-primary" /> Chat
-                                        </Link>
-                                      </Button>
+                                        </Button>
+                                      </Link>
                                     )}
 
                                     {!isConfirmed && !isCancelled && (
@@ -597,5 +602,6 @@ export default function BookingsPage() {
         </TabsContent>
       </Tabs>
     </div>
+    </SubscriptionGate>
   );
 }

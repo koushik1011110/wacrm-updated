@@ -43,23 +43,53 @@ export async function GET() {
     const totalTokensUsed = (logs || []).reduce((sum, l) => sum + (l.total_tokens || 0), 0);
     const totalCostInr = (logs || []).reduce((sum, l) => sum + Number(l.cost_inr || 0), 0);
 
-    // 4. Token Rate
+    // 4. Token Rate & Subscription Pricing Configs
     const { data: rateData } = await db
       .from('superadmin_billing_configs')
-      .select('token_rate_per_1k_inr')
+      .select('token_rate_per_1k_inr, monthly_subscription_price_inr')
       .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle();
 
     const tokenRatePer1kInr = Number(rateData?.token_rate_per_1k_inr ?? 0.15);
+    const monthlySubscriptionPriceInr = Number(rateData?.monthly_subscription_price_inr ?? 499.00);
 
-    const formattedAccounts = (accounts || []).map((acc) => ({
-      id: acc.id,
-      name: acc.name,
-      wallet_balance_inr: Number(acc.wallet_balance_inr ?? 100.0),
-      user_count: profileCountMap[acc.id] || 0,
-      created_at: acc.created_at,
-    }));
+    // 5. Active Subscriptions map per account
+    const { data: subscriptions } = await db
+      .from('subscriptions')
+      .select('account_id, plan_type, status, expires_at, is_free_grant, applied_coupon_code')
+      .eq('status', 'active')
+      .gt('expires_at', new Date().toISOString());
+
+    const subMap: Record<string, any> = {};
+    (subscriptions || []).forEach((sub) => {
+      subMap[sub.account_id] = sub;
+    });
+
+    // 6. Coupons list
+    const { data: coupons } = await db
+      .from('coupons')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    const formattedAccounts = (accounts || []).map((acc) => {
+      const activeSub = subMap[acc.id];
+      return {
+        id: acc.id,
+        name: acc.name,
+        wallet_balance_inr: Number(acc.wallet_balance_inr ?? 100.0),
+        user_count: profileCountMap[acc.id] || 0,
+        created_at: acc.created_at,
+        subscription: activeSub
+          ? {
+              status: activeSub.status,
+              expires_at: activeSub.expires_at,
+              is_free_grant: activeSub.is_free_grant,
+              applied_coupon_code: activeSub.applied_coupon_code,
+            }
+          : null,
+      };
+    });
 
     return NextResponse.json({
       total_users: totalUsers || 0,
@@ -67,6 +97,8 @@ export async function GET() {
       total_tokens_used: totalTokensUsed,
       total_cost_inr: Number(totalCostInr.toFixed(4)),
       token_rate_per_1k_inr: tokenRatePer1kInr,
+      monthly_subscription_price_inr: monthlySubscriptionPriceInr,
+      coupons: coupons || [],
       accounts: formattedAccounts,
     });
   } catch (err: any) {

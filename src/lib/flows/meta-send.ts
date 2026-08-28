@@ -551,6 +551,21 @@ export async function engineSendCtaUrl(
   return { whatsapp_message_id: waMessageId }
 }
 
+async function resolveAccountConfig(accountId: string): Promise<{ phoneNumberId: string; accessToken: string } | null> {
+  const db = supabaseAdmin()
+  const { data: config } = await db
+    .from('whatsapp_config')
+    .select('phone_number_id, access_token')
+    .eq('account_id', accountId)
+    .maybeSingle()
+
+  if (!config?.phone_number_id || !config?.access_token) return null
+  return {
+    phoneNumberId: config.phone_number_id,
+    accessToken: decrypt(config.access_token),
+  }
+}
+
 export async function engineMarkMessageAsRead(input: {
   accountId: string
   metaMessageId: string

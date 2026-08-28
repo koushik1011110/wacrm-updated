@@ -159,7 +159,7 @@ export function SuperadminAiBillingCard() {
               <Label className="text-xs text-muted-foreground">Select Account / Workspace</Label>
               <Select
                 value={selectedAccountId}
-                onValueChange={setSelectedAccountId}
+                onValueChange={(val) => setSelectedAccountId(val || '')}
                 disabled={loading || accounts.length === 0}
               >
                 <SelectTrigger>

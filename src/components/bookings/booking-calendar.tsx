@@ -257,11 +257,11 @@ export function BookingCalendar({ bookings }: BookingCalendarProps) {
 
                   {b.conversation_id && (
                     <div className="pt-1 flex justify-end">
-                      <Button variant="ghost" size="sm" asChild className="h-7 text-xs gap-1">
-                        <Link href={`/inbox?conversation=${b.conversation_id}`}>
+                      <Link href={`/inbox?conversation=${b.conversation_id}`}>
+                        <Button variant="ghost" size="sm" className="h-7 text-xs gap-1">
                           <MessageSquare className="h-3 w-3 text-primary" /> Chat in Inbox
-                        </Link>
-                      </Button>
+                        </Button>
+                      </Link>
                     </div>
                   )}
                 </div>
