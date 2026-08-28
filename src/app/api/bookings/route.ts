@@ -73,8 +73,16 @@ export async function GET(request: Request) {
       .filter((b) => b.status === 'confirmed' || b.payment_status === 'SUCCESS')
       .reduce((sum, b) => sum + Number(b.advance_amount || 0), 0);
 
+    // Fetch booking categories / rental products
+    const { data: categories } = await db
+      .from('booking_categories')
+      .select('*')
+      .eq('account_id', accountId)
+      .order('created_at', { ascending: true });
+
     return NextResponse.json({
       bookings: list,
+      categories: categories || [],
       default_advance_amount: defaultAdvanceAmount,
       time_slots: timeSlots,
       stats: {

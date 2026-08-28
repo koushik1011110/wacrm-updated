@@ -118,17 +118,6 @@ export async function dispatchInboundToAiReply(
   try {
     const db = supabaseAdmin()
 
-    const config = await loadAiConfig(db, accountId)
-    if (!config) {
-      console.log('AI auto-reply skipped', {
-        reason: 'AI config not found',
-        contactId,
-        conversationId,
-        messageId: incomingMessageId,
-      })
-      return
-    }
-
     // Fetch contact
     const { data: contact } = await db
       .from('contacts')
@@ -139,13 +128,164 @@ export async function dispatchInboundToAiReply(
     // Fetch conversation
     const { data: conversation } = await db
       .from('conversations')
-      .select('id, assigned_agent_id, ai_autoreply_disabled, ai_reply_count, status, last_message_at')
+      .select('id, assigned_agent_id, ai_autoreply_disabled, ai_reply_count, status, last_message_at, current_booking_id, booking_step')
       .eq('id', conversationId)
       .single()
 
     if (!contact || !conversation) {
-      console.log('AI auto-reply skipped', {
+      console.log('AI auto-reply / Booking skipped', {
         reason: 'Missing contact or conversation record',
+        contactId,
+        conversationId,
+        messageId: incomingMessageId,
+      })
+      return
+    }
+
+    // Fetch incoming message
+    let incomingMessage = null
+    if (incomingMessageId) {
+      const { data: msg } = await db
+        .from('messages')
+        .select('id, content_text, interactive_reply_id, message_id')
+        .eq('id', incomingMessageId)
+        .single()
+      incomingMessage = msg
+    } else {
+      const { data: msg } = await db
+        .from('messages')
+        .select('id, content_text, interactive_reply_id, message_id')
+        .eq('conversation_id', conversationId)
+        .eq('sender_type', 'customer')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      incomingMessage = msg
+    }
+
+    if (!incomingMessage) {
+      console.log('AI auto-reply / Booking skipped', {
+        reason: 'Missing incomingMessage record',
+        contactId: contact.id,
+        conversationId: conversation.id,
+        messageId: incomingMessageId,
+      })
+      return
+    }
+
+    const messageTextToProcess =
+      incomingMessage.interactive_reply_id || incomingMessage.content_text || ''
+
+    // 1. UNCONDITIONAL BOOKING FLOW ENGINE EXECUTION
+    // This allows booking intent & interactive list selections to work always!
+    if (messageTextToProcess.trim()) {
+      const bookingState = await processBookingFlow(
+        db,
+        accountId,
+        conversation.id,
+        contact.id,
+        messageTextToProcess,
+        configOwnerUserId
+      )
+
+      if (bookingState.isBookingFlow && (bookingState.replyText || bookingState.interactiveList)) {
+        console.log('[booking flow] Handling booking step for customer:', bookingState.step)
+
+        // Mark incoming customer message as READ (blue ticks on WhatsApp)
+        if (incomingMessage?.message_id) {
+          await engineMarkMessageAsRead({
+            accountId,
+            metaMessageId: incomingMessage.message_id,
+          }).catch((err) => console.warn('[auto-reply] mark read error:', err))
+        }
+
+        // Simulate natural human typing pause
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+
+        // 1A. Send Interactive List for Category or Rental Product Selection
+        if (bookingState.interactiveList) {
+          try {
+            console.log('[booking flow] Sending WhatsApp Interactive List for selection...')
+            await engineSendInteractiveList({
+              accountId,
+              userId: configOwnerUserId,
+              conversationId: conversation.id,
+              contactId: contact.id,
+              headerText: bookingState.interactiveList.headerText,
+              bodyText: bookingState.interactiveList.bodyText,
+              buttonLabel: bookingState.interactiveList.buttonLabel,
+              footerText: bookingState.interactiveList.footerText,
+              sections: bookingState.interactiveList.sections,
+            })
+            console.log('[booking flow] WhatsApp Interactive List successfully sent!')
+            return
+          } catch (listErr) {
+            console.error('[booking flow] Interactive list send error, falling back to text:', listErr)
+          }
+        }
+
+        // 1B. Send Interactive List for Date & Slot selection
+        if (bookingState.step === 'datetime' && bookingState.slotSections) {
+          try {
+            console.log('[booking flow] Sending WhatsApp Interactive List for Date & Slot selection...')
+            await engineSendInteractiveList({
+              accountId,
+              userId: configOwnerUserId,
+              conversationId: conversation.id,
+              contactId: contact.id,
+              headerText: '📅 Appointment Booking',
+              bodyText: 'Please tap the button below to select your preferred booking slot:',
+              buttonLabel: 'Select Time Slot',
+              footerText: 'Choose from available slots',
+              sections: bookingState.slotSections,
+            })
+            console.log('[booking flow] WhatsApp Interactive List successfully sent!')
+            return
+          } catch (listErr) {
+            console.error('[booking flow] Interactive list send error:', listErr)
+          }
+        }
+
+        // 1C. Send PayU Payment CTA
+        if (bookingState.step === 'payment' && bookingState.paymentLink) {
+          try {
+            const payAmount = bookingState.advanceAmount ? Number(bookingState.advanceAmount).toFixed(0) : '500'
+            await engineSendCtaUrl({
+              accountId,
+              userId: configOwnerUserId,
+              conversationId: conversation.id,
+              contactId: contact.id,
+              headerText: '📅 Booking Payment',
+              bodyText: bookingState.replyText || 'Please complete your booking payment:',
+              buttonLabel: `💳 Pay ₹${payAmount} Now`,
+              url: bookingState.paymentLink,
+              footerText: 'Instant Confirmation via PayU',
+              isAiReply: true,
+            })
+            return
+          } catch (ctaErr) {
+            console.warn('[booking flow] Interactive CTA send error, falling back to text:', ctaErr)
+          }
+        }
+
+        // 1D. Send Text Reply
+        await engineSendText({
+          accountId,
+          userId: configOwnerUserId,
+          conversationId: conversation.id,
+          contactId: contact.id,
+          text: bookingState.replyText || 'Please select an option to continue your booking.',
+          isAiReply: true,
+        })
+        return
+      }
+    }
+
+    // 2. GENERAL AI AUTO-REPLY (Knowledge Base & LLM)
+    const config = await loadAiConfig(db, accountId)
+    if (!config) {
+      console.log('AI auto-reply skipped', {
+        reason: 'AI config not found',
         contactId,
         conversationId,
         messageId: incomingMessageId,
@@ -186,37 +326,6 @@ export async function dispatchInboundToAiReply(
       }
     }
 
-    // Fetch incoming message
-    let incomingMessage = null
-    if (incomingMessageId) {
-      const { data: msg } = await db
-        .from('messages')
-        .select('id, content_text, message_id')
-        .eq('id', incomingMessageId)
-        .single()
-      incomingMessage = msg
-    } else {
-      const { data: msg } = await db
-        .from('messages')
-        .select('id, content_text, message_id')
-        .eq('conversation_id', conversationId)
-        .eq('sender_type', 'customer')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      incomingMessage = msg
-    }
-
-    if (!incomingMessage) {
-      console.log('AI auto-reply skipped', {
-        reason: 'Missing incomingMessage record',
-        contactId: contact.id,
-        conversationId: conversation.id,
-        messageId: incomingMessageId,
-      })
-      return
-    }
-
     const eligibility = await canSendAIAutoReply({
       accountId,
       contact,
@@ -246,78 +355,11 @@ export async function dispatchInboundToAiReply(
       await engineMarkMessageAsRead({
         accountId,
         metaMessageId: incomingMessage.message_id,
-      }).catch((err) => console.warn('[auto-reply] mark read error:', err));
+      }).catch((err) => console.warn('[auto-reply] mark read error:', err))
     }
 
-    // Simulate natural human typing pause (1.8s) so replies do not feel robotic
-    await new Promise((resolve) => setTimeout(resolve, 1800));
-
-    // Check for active or new Booking Flow intent
-    if (incomingMessage?.content_text) {
-      const bookingState = await processBookingFlow(
-        db,
-        accountId,
-        conversation.id,
-        contact.id,
-        incomingMessage.content_text,
-        configOwnerUserId
-      );
-
-      if (bookingState.isBookingFlow && bookingState.replyText) {
-        console.log('[booking flow] Sending structured booking step reply to customer');
-
-        if (bookingState.step === 'datetime' && bookingState.slotSections) {
-          try {
-            console.log('[booking flow] Sending WhatsApp Interactive List for Date & Slot selection...');
-            await engineSendInteractiveList({
-              accountId,
-              userId: configOwnerUserId,
-              conversationId: conversation.id,
-              contactId: contact.id,
-              headerText: '📅 Appointment Booking',
-              bodyText: 'Please tap the button below to select your preferred booking slot:',
-              buttonLabel: 'Select Time Slot',
-              footerText: 'Choose from available slots',
-              sections: bookingState.slotSections,
-            });
-            console.log('[booking flow] WhatsApp Interactive List successfully sent!');
-            return;
-          } catch (listErr) {
-            console.error('[booking flow] Interactive list send error:', listErr);
-          }
-        }
-
-        if (bookingState.step === 'payment' && bookingState.paymentLink) {
-          try {
-            await engineSendCtaUrl({
-              accountId,
-              userId: configOwnerUserId,
-              conversationId: conversation.id,
-              contactId: contact.id,
-              headerText: '📅 Booking Payment',
-              bodyText: bookingState.replyText,
-              buttonLabel: '💳 Pay ₹1.00 Now',
-              url: bookingState.paymentLink,
-              footerText: 'Instant Confirmation via PayU',
-              isAiReply: true,
-            });
-            return;
-          } catch (ctaErr) {
-            console.warn('[booking flow] Interactive CTA send error, falling back to text:', ctaErr);
-          }
-        }
-
-        await engineSendText({
-          accountId,
-          userId: configOwnerUserId,
-          conversationId: conversation.id,
-          contactId: contact.id,
-          text: bookingState.replyText,
-          isAiReply: true,
-        });
-        return;
-      }
-    }
+    // Simulate typing pause
+    await new Promise((resolve) => setTimeout(resolve, 1800))
 
     console.log(`[ai auto-reply] contact ID: ${contact.id}, conversation ID: ${conversation.id}`)
     console.log(`[ai auto-reply] AI enabled status: account=${config.autoReplyEnabled}, conv_disabled=${conversation.ai_autoreply_disabled}`)

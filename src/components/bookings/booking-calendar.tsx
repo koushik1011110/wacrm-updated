@@ -27,6 +27,9 @@ interface Booking {
   booking_date?: string;
   booking_time?: string;
   advance_amount: number;
+  service_name?: string;
+  category_type?: string;
+  category_id?: string;
   status: 'pending_details' | 'pending_payment' | 'confirmed' | 'cancelled';
   cashfree_order_id?: string;
   payment_status: string;
@@ -238,6 +241,12 @@ export function BookingCalendar({ bookings }: BookingCalendarProps) {
                       </span>
                     )}
                   </div>
+
+                  {b.service_name && (
+                    <div className="text-[11px] font-medium text-primary bg-primary/10 border border-primary/20 px-2 py-0.5 rounded inline-block">
+                      {b.category_type === 'rental' ? '📦 ' : '🎙️ '}{b.service_name}
+                    </div>
+                  )}
 
                   <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground font-mono">
                     <div className="flex items-center gap-1">

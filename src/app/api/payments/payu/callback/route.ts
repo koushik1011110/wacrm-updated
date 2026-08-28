@@ -267,14 +267,16 @@ export async function POST(request: Request) {
         const userId = profile?.user_id || 'system';
 
         if (accountId && contactId && conversationId) {
+          const serviceName = booking.service_name || 'Booking Appointment';
           const confirmationMessage =
             `🎉 *Payment Successful via PayU! Booking Confirmed!* 🎉\n\n` +
             `📋 *Booking Summary:*\n` +
+            `• *Item / Service:* ${serviceName}\n` +
             `• *PayU Txn ID:* ${txnid}\n` +
             `• *Name:* ${booking.customer_name || 'Customer'}\n` +
             `• *Phone:* ${booking.customer_phone || ''}\n` +
             `• *Date & Slot:* ${booking.booking_date || 'Confirmed'}\n` +
-            `• *Advance Paid:* ₹${booking.advance_amount || 1}\n\n` +
+            `• *Advance Paid:* ₹${booking.advance_amount || 500}\n\n` +
             `Thank you for booking with us! We look forward to serving you. 😊`;
 
           console.log('[payu callback] Sending WhatsApp confirmation message to contact:', contactId);

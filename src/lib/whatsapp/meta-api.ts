@@ -956,19 +956,19 @@ export async function sendInteractiveList(
     type: 'list',
     body: { text: bodyText },
     action: {
-      button: buttonLabel,
+      button: buttonLabel.slice(0, INTERACTIVE_LIMITS.buttonTitleMaxLength),
       sections: sections.map((s) => ({
-        ...(s.title ? { title: s.title } : {}),
+        ...(s.title ? { title: s.title.slice(0, INTERACTIVE_LIMITS.listRowTitleMaxLength) } : {}),
         rows: s.rows.map((r) => ({
           id: r.id,
-          title: r.title,
-          ...(r.description ? { description: r.description } : {}),
+          title: r.title.slice(0, INTERACTIVE_LIMITS.listRowTitleMaxLength),
+          ...(r.description ? { description: r.description.slice(0, INTERACTIVE_LIMITS.listRowDescriptionMaxLength) } : {}),
         })),
       })),
     },
   }
-  if (headerText) interactive.header = { type: 'text', text: headerText }
-  if (footerText) interactive.footer = { text: footerText }
+  if (headerText) interactive.header = { type: 'text', text: headerText.slice(0, INTERACTIVE_LIMITS.headerTextMaxLength) }
+  if (footerText) interactive.footer = { text: footerText.slice(0, INTERACTIVE_LIMITS.footerMaxLength) }
 
   const body: Record<string, unknown> = {
     messaging_product: 'whatsapp',

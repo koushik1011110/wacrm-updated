@@ -120,9 +120,11 @@ export async function POST(request: Request) {
         const userId = profile?.user_id || 'system';
 
         if (accountId && contactId && conversationId) {
+          const serviceName = booking.service_name || 'Booking Appointment';
           const confirmationMessage =
             `🎉 *Payment Successful! Booking Confirmed!* 🎉\n\n` +
             `📋 *Booking Summary:*\n` +
+            `• *Item / Service:* ${serviceName}\n` +
             `• *Reference ID:* ${orderId}\n` +
             `• *Name:* ${booking.customer_name || 'Customer'}\n` +
             `• *Phone:* ${booking.customer_phone || ''}\n` +
