@@ -16,6 +16,9 @@ import {
   Zap,
   Bot,
   CalendarRange,
+  Wallet,
+  PlusCircle,
+  IndianRupee,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -38,6 +41,8 @@ export default function BillingPage() {
   const [isPro, setIsPro] = useState(false);
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
   const [monthlyPrice, setMonthlyPrice] = useState<number>(499.00);
+  const [walletBalance, setWalletBalance] = useState<number>(0.00);
+  const [accountId, setAccountId] = useState<string>('');
 
   // Coupon state
   const [couponCode, setCouponCode] = useState('');
@@ -52,6 +57,10 @@ export default function BillingPage() {
   // Checkout loading
   const [checkoutLoading, setCheckoutLoading] = useState(false);
 
+  // Wallet top-up state
+  const [topupInput, setTopupInput] = useState<string>('500');
+  const [topupLoading, setTopupLoading] = useState(false);
+
   const fetchStatus = useCallback(async () => {
     setLoading(true);
     try {
@@ -61,6 +70,18 @@ export default function BillingPage() {
         setIsPro(json.is_pro);
         setSubscription(json.subscription);
         setMonthlyPrice(json.monthly_price_inr || 499.00);
+        if (json.account_id) {
+          setAccountId(json.account_id);
+          // Fetch wallet balance for account
+          const accRes = await fetch('/api/superadmin/portal/data');
+          if (accRes.ok) {
+            const accJson = await accRes.json();
+            const currentAcc = accJson.accounts?.find((a: any) => a.id === json.account_id);
+            if (currentAcc) {
+              setWalletBalance(currentAcc.wallet_balance_inr || 0.00);
+            }
+          }
+        }
       }
     } catch (err) {
       console.error('Failed to load subscription status:', err);
@@ -73,13 +94,22 @@ export default function BillingPage() {
     void fetchStatus();
 
     // Check query params for PayU payment response
-    const success = searchParams.get('subscription_success');
-    const error = searchParams.get('subscription_error');
+    const subSuccess = searchParams.get('subscription_success');
+    const subError = searchParams.get('subscription_error');
+    const topupSuccess = searchParams.get('topup_success');
+    const topupAmount = searchParams.get('amount');
+    const topupError = searchParams.get('topup_error');
 
-    if (success) {
+    if (subSuccess) {
       toast.success('🎉 Monthly subscription activated successfully!');
-    } else if (error) {
-      toast.error('Payment failed or was canceled. Please try again.');
+    } else if (subError) {
+      toast.error('Subscription payment failed or was canceled.');
+    }
+
+    if (topupSuccess) {
+      toast.success(`🎉 ₹${topupAmount || ''} added to your AI wallet balance via PayU!`);
+    } else if (topupError) {
+      toast.error('Wallet top-up payment failed or was canceled.');
     }
   }, [fetchStatus, searchParams]);
 
@@ -120,22 +150,18 @@ export default function BillingPage() {
   const handleInitiatePayment = async () => {
     setCheckoutLoading(true);
     try {
-      // 1. Get status for account id
-      const statusRes = await fetch('/api/subscriptions/status');
-      const statusJson = await statusRes.json();
-
-      if (!statusJson.account_id) {
+      if (!accountId) {
         toast.error('Account workspace not found');
         setCheckoutLoading(false);
         return;
       }
 
-      // 2. Initiate subscription API call
+      // Initiate subscription API call
       const res = await fetch('/api/payments/payu/subscription/initiate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          account_id: statusJson.account_id,
+          account_id: accountId,
           coupon_code: appliedCoupon?.code || null,
         }),
       });
@@ -174,9 +200,63 @@ export default function BillingPage() {
         document.body.appendChild(form);
         form.submit();
       }
-    } catch (err: any) {
+    } catch {
       toast.error('Payment initialization error');
       setCheckoutLoading(false);
+    }
+  };
+
+  const handleInitiateWalletTopup = async (amountVal?: number) => {
+    const amt = amountVal || Number(topupInput);
+    if (isNaN(amt) || amt <= 0) {
+      toast.error('Enter a valid top-up amount in ₹');
+      return;
+    }
+
+    if (!accountId) {
+      toast.error('Account workspace not found');
+      return;
+    }
+
+    setTopupLoading(true);
+    try {
+      const res = await fetch('/api/payments/payu/wallet/initiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          account_id: accountId,
+          amount: amt,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        toast.error(json.error || 'Failed to initiate top-up payment');
+        setTopupLoading(false);
+        return;
+      }
+
+      // Submit PayU HTML Form automatically
+      if (json.payu && json.payu.formData) {
+        const { action, ...formData } = json.payu.formData;
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = action;
+
+        Object.entries(formData).forEach(([key, value]) => {
+          const hiddenField = document.createElement('input');
+          hiddenField.type = 'hidden';
+          hiddenField.name = key;
+          hiddenField.value = String(value);
+          form.appendChild(hiddenField);
+        });
+
+        document.body.appendChild(form);
+        form.submit();
+      }
+    } catch {
+      toast.error('Top-up payment initiation failed');
+      setTopupLoading(false);
     }
   };
 
@@ -196,63 +276,137 @@ export default function BillingPage() {
       <div>
         <div className="flex items-center gap-2">
           <Crown className="h-7 w-7 text-amber-400" />
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">SaaS Subscription & Billing</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">SaaS Subscription & AI Wallet</h1>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          Upgrade your plan to unlock full AI Agent automation and Booking management features with PayU.
+          Upgrade your SaaS subscription for premium feature access and top up your AI token balance via PayU.
         </p>
       </div>
 
-      {/* Current Plan Status Card */}
-      <Card className={`border-2 ${isPro ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-border bg-card'}`}>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2">
-              <ShieldCheck className={`h-5 w-5 ${isPro ? 'text-emerald-400' : 'text-muted-foreground'}`} />
-              Current Plan Status
-            </CardTitle>
-            {isPro ? (
-              <Badge className="bg-emerald-500 text-white font-semibold">
-                <Crown className="mr-1 h-3.5 w-3.5" /> PRO PLAN ACTIVE
-              </Badge>
-            ) : (
-              <Badge variant="outline" className="text-muted-foreground">
-                FREE PLAN (BASIC)
-              </Badge>
-            )}
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {isPro && subscription ? (
-            <div className="space-y-2">
-              <p className="text-sm text-foreground">
-                Your workspace has full access to <strong>AI Agent Automation</strong>, <strong>WhatsApp Flow Bookings</strong>, and premium features!
-              </p>
-              <div className="flex items-center gap-4 text-xs text-muted-foreground pt-1">
-                <span className="flex items-center gap-1">
-                  <Calendar className="h-4 w-4 text-primary" /> Valid Until: <strong>{new Date(subscription.expires_at).toLocaleDateString()}</strong>
-                </span>
-                {subscription.is_free_grant && (
-                  <span className="flex items-center gap-1 text-emerald-400 font-semibold">
-                    <Gift className="h-4 w-4" /> Free Grant / Coupon Benefit
+      {/* Top Status Cards */}
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Current Plan Status Card */}
+        <Card className={`border-2 ${isPro ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-border bg-card'}`}>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base flex items-center gap-2">
+                <ShieldCheck className={`h-5 w-5 ${isPro ? 'text-emerald-400' : 'text-muted-foreground'}`} />
+                Subscription Plan
+              </CardTitle>
+              {isPro ? (
+                <Badge className="bg-emerald-500 text-white font-semibold">
+                  <Crown className="mr-1 h-3.5 w-3.5" /> PRO PLAN ACTIVE
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-muted-foreground">
+                  FREE PLAN (BASIC)
+                </Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {isPro && subscription ? (
+              <div className="space-y-2">
+                <p className="text-sm text-foreground">
+                  Full access to <strong>AI Agent Automation</strong> and <strong>WhatsApp Bookings</strong>!
+                </p>
+                <div className="flex items-center gap-4 text-xs text-muted-foreground pt-1">
+                  <span className="flex items-center gap-1">
+                    <Calendar className="h-4 w-4 text-primary" /> Valid Until: <strong>{new Date(subscription.expires_at).toLocaleDateString()}</strong>
                   </span>
-                )}
+                  {subscription.is_free_grant && (
+                    <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+                      <Gift className="h-4 w-4" /> Free Grant Benefit
+                    </span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">
+                  You are currently on the Free Basic plan. Basic messaging is included.
+                </p>
+                <p className="text-xs text-amber-400 font-medium">
+                  ⚠️ Upgrade to Pro to enable AI Agent Bot responses and Booking systems.
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Current Wallet Balance Card */}
+        <Card className="border-2 border-emerald-500/30 bg-card">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Wallet className="h-5 w-5 text-emerald-400" /> AI Wallet Balance
+              </CardTitle>
+              <span className="text-2xl font-bold font-mono text-emerald-400">
+                ₹{walletBalance.toFixed(2)}
+              </span>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Deducted per AI token consumed by AI agents. Token rates are managed globally by Superadmin.
+            </p>
+
+            {/* Quick Top-Up Section */}
+            <div className="rounded-lg border border-border bg-muted/40 p-3 space-y-3">
+              <div className="flex items-center justify-between text-xs font-semibold text-foreground">
+                <span className="flex items-center gap-1">
+                  <PlusCircle className="h-4 w-4 text-emerald-400" /> Top-Up Balance via PayU
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <IndianRupee className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+                  <Input
+                    type="number"
+                    min="10"
+                    placeholder="Enter amount (e.g. 500)"
+                    value={topupInput}
+                    onChange={(e) => setTopupInput(e.target.value)}
+                    className="pl-7 text-xs font-mono border-border bg-muted h-9"
+                  />
+                </div>
+                <Button
+                  size="sm"
+                  onClick={() => handleInitiateWalletTopup()}
+                  disabled={topupLoading}
+                  className="h-9 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                >
+                  {topupLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CreditCard className="h-3.5 w-3.5" />}
+                  Pay & Add
+                </Button>
+              </div>
+
+              {/* Quick Presets */}
+              <div className="flex items-center gap-2 pt-1">
+                <span className="text-[11px] text-muted-foreground">Presets:</span>
+                {[100, 500, 1000, 2000].map((amt) => (
+                  <Button
+                    key={amt}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[11px] font-mono"
+                    onClick={() => {
+                      setTopupInput(String(amt));
+                      void handleInitiateWalletTopup(amt);
+                    }}
+                  >
+                    +₹{amt}
+                  </Button>
+                ))}
               </div>
             </div>
-          ) : (
-            <div className="space-y-1">
-              <p className="text-sm text-muted-foreground">
-                You are currently on the Free Basic plan. Basic messaging is included for free.
-              </p>
-              <p className="text-xs text-amber-400 font-medium">
-                ⚠️ Upgrade to Pro to enable AI Agent Bot responses and Booking systems.
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
 
-      {/* Pro Features Showcase & PayU Checkout Card */}
+      {/* Pro Features Showcase & PayU Subscription Card */}
       <div className="grid gap-6 md:grid-cols-2">
         {/* Left: What's included in Pro Plan */}
         <Card className="border-border bg-card">
@@ -303,7 +457,7 @@ export default function BillingPage() {
           </CardContent>
         </Card>
 
-        {/* Right: Upgrade / PayU Checkout Form */}
+        {/* Right: Upgrade / PayU Subscription Form */}
         <Card className="border-2 border-primary/30 bg-card shadow-xl flex flex-col justify-between">
           <CardHeader>
             <CardTitle className="text-lg flex items-center justify-between text-foreground">

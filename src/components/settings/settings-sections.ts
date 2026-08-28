@@ -59,7 +59,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   members: { id: 'members', label: 'Team members', icon: UsersRound, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
   payu: { id: 'payu', label: 'PayU Payment Setup', icon: Coins, group: 'workspace' },
-  superadmin: { id: 'superadmin', label: 'Superadmin Config', icon: Shield, group: 'workspace' },
+  superadmin: { id: 'superadmin', label: 'Meta & System Config', icon: Shield, group: 'workspace' },
 };
 
 export const RAIL_GROUPS: { label: string | null; group: SectionMeta['group'] }[] = [

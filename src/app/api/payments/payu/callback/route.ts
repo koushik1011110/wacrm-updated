@@ -48,6 +48,48 @@ export async function POST(request: Request) {
 
     const productinfo = bodyData.productinfo || '';
 
+    // Check if this is an AI Wallet Top-Up payment callback
+    const isTopUpPayment = txnid.startsWith('TOPUP_') || productinfo.startsWith('TOPUP|');
+
+    if (isTopUpPayment) {
+      const isSuccess =
+        status === 'success' ||
+        status === 'paid' ||
+        status === 'completed' ||
+        bodyData.unmappedstatus === 'captured';
+
+      if (isSuccess) {
+        // Parse accountId and amount from productinfo (Format: TOPUP|ACCOUNT_ID|AMOUNT)
+        const parts = productinfo.split('|');
+        const accountId = parts[1] || '';
+        const amountFromInfo = Number(parts[2] || 0);
+        const topupAmount = amountFromInfo > 0 ? amountFromInfo : Number(bodyData.amount || 0);
+
+        if (accountId && topupAmount > 0) {
+          // Fetch current wallet balance
+          const { data: acc } = await db
+            .from('accounts')
+            .select('wallet_balance_inr')
+            .eq('id', accountId)
+            .single();
+
+          const current = Number(acc?.wallet_balance_inr || 0);
+          const updated = current + topupAmount;
+
+          await db
+            .from('accounts')
+            .update({ wallet_balance_inr: updated })
+            .eq('id', accountId);
+
+          console.log(`[payu callback] Successfully added ₹${topupAmount} to account ${accountId}. New balance: ₹${updated}`);
+        }
+
+        return NextResponse.redirect(`${siteUrl}/billing?topup_success=true&amount=${topupAmount}`, { status: 303 });
+      }
+
+      return NextResponse.redirect(`${siteUrl}/billing?topup_error=${encodeURIComponent(status || 'failed')}`, { status: 303 });
+    }
+
     // Check if this is a SaaS Subscription payment callback
     const isSubscriptionPayment = txnid.startsWith('SUB_') || productinfo.startsWith('SUB|');
 

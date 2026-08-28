@@ -191,11 +191,9 @@ export function SuperadminConfig() {
   return (
     <section className="animate-in fade-in-50 duration-200 space-y-6">
       <SettingsPanelHead
-        title="Superadmin Configuration"
-        description="View and verify CRM-wide Meta App variables, WhatsApp setup, and AI token pricing/balances."
+        title="Meta & System Configuration"
+        description="View and verify CRM-wide Meta App variables and WhatsApp embedded setup."
       />
-
-      <SuperadminAiBillingCard />
 
       <div className="grid gap-6 md:grid-cols-[1fr_360px]">
         {/* Environment status details */}
