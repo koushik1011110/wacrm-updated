@@ -108,6 +108,13 @@ export async function POST(request: Request) {
     const txnid = `SUB_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const productinfo = `SUB|${account_id}|${appliedCoupon?.code || 'NONE'}`;
 
+    // Fetch the account's PayU credentials so the correct env/key/salt is used
+    const { data: accPayu } = await db
+      .from('accounts')
+      .select('payu_merchant_key, payu_merchant_salt, payu_env')
+      .eq('id', account_id)
+      .maybeSingle();
+
     const payuDetails = createPayUPaymentDetails({
       txnid,
       amount: finalPrice,
@@ -115,6 +122,10 @@ export async function POST(request: Request) {
       firstname: firstname || 'Customer',
       email: email || 'customer@wacrm.com',
       phone: phone || '9876543210',
+      merchantKey: accPayu?.payu_merchant_key || undefined,
+      merchantSalt: accPayu?.payu_merchant_salt || undefined,
+      payuEnv: accPayu?.payu_env || undefined,
+      accountId: account_id,
     });
 
     return NextResponse.json({

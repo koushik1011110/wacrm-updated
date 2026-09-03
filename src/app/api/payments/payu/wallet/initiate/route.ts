@@ -19,10 +19,10 @@ export async function POST(request: Request) {
 
     const db = supabaseAdmin();
 
-    // Verify account exists
+    // Verify account exists and fetch its PayU credentials
     const { data: account, error: accErr } = await db
       .from('accounts')
-      .select('id, name')
+      .select('id, name, payu_merchant_key, payu_merchant_salt, payu_env')
       .eq('id', account_id)
       .maybeSingle();
 
@@ -40,6 +40,10 @@ export async function POST(request: Request) {
       firstname: firstname || 'Customer',
       email: email || 'customer@wacrm.com',
       phone: phone || '9876543210',
+      merchantKey: account?.payu_merchant_key || undefined,
+      merchantSalt: account?.payu_merchant_salt || undefined,
+      payuEnv: account?.payu_env || undefined,
+      accountId: account_id,
     });
 
     return NextResponse.json({

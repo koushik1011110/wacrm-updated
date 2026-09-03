@@ -12,6 +12,7 @@ interface CreatePayUParams {
   merchantKey?: string;
   merchantSalt?: string;
   payuEnv?: string;
+  accountId?: string;
 }
 
 export interface PayUFormData {
@@ -135,6 +136,9 @@ export function createPayUPaymentDetails(params: CreatePayUParams): {
     firstname: params.firstname || 'Customer',
     productinfo: params.productinfo,
   });
+  if (params.accountId) {
+    queryParams.set('account_id', params.accountId);
+  }
 
   const paymentLink = `${siteUrl}/payu-checkout?${queryParams.toString()}`;
 

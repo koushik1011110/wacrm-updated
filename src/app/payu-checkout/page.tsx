@@ -11,6 +11,7 @@ function PayUCheckoutInner() {
   const amount = searchParams.get('amount') || '1.00';
   const firstname = searchParams.get('firstname') || 'Customer';
   const productinfo = searchParams.get('productinfo') || 'Advance Booking Fee';
+  const accountId = searchParams.get('account_id') || '';
 
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -29,7 +30,7 @@ function PayUCheckoutInner() {
     const fetchPayUData = async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/api/payments/payu/hash?txnid=${encodeURIComponent(txnid)}&amount=${encodeURIComponent(amount)}&firstname=${encodeURIComponent(firstname)}&productinfo=${encodeURIComponent(productinfo)}`);
+        const res = await fetch(`/api/payments/payu/hash?txnid=${encodeURIComponent(txnid)}&amount=${encodeURIComponent(amount)}&firstname=${encodeURIComponent(firstname)}&productinfo=${encodeURIComponent(productinfo)}&account_id=${encodeURIComponent(accountId)}`);
         if (res.ok) {
           const json = await res.json();
           setPayuData(json.formData);
