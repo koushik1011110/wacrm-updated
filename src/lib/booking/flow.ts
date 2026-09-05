@@ -838,12 +838,13 @@ export async function processBookingFlow(
         merchantKey: accConfig?.payu_merchant_key || undefined,
         merchantSalt: accConfig?.payu_merchant_salt || undefined,
         payuEnv: accConfig?.payu_env || undefined,
+        accountId,
       });
       paymentLink = payuOrder.paymentLink;
     } catch (err: any) {
       console.error('[booking] PayU payment link generation failed:', err);
       const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000';
-      paymentLink = `${siteUrl}/payu-checkout?txnid=${txnid}&amount=${advanceAmount}`;
+      paymentLink = `${siteUrl}/payu-checkout?txnid=${txnid}&amount=${advanceAmount}&account_id=${accountId}`;
     }
 
     await db

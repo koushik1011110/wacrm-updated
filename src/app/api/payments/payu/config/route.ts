@@ -44,7 +44,7 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       merchant_key: merchantKey,
-      merchant_salt: maskedSalt,
+      merchant_salt: '', // never prefill the masked salt into the editable field
       env: payuEnv,
       is_custom: Boolean(account?.payu_merchant_key && account?.payu_merchant_salt),
     });
@@ -84,6 +84,13 @@ export async function POST(request: Request) {
 
     if (!merchant_key || !merchant_salt) {
       return NextResponse.json({ error: 'Merchant Key and Merchant Salt are required' }, { status: 400 });
+    }
+
+    // Guard against the masked-salt round-trip bug: the UI never sends the
+    // real salt back, so if the value contains the mask bullet (•) it is the
+    // display placeholder, not a valid salt.
+    if (String(merchant_salt).includes('•')) {
+      return NextResponse.json({ error: 'Please enter the full Merchant Salt from your PayU dashboard (the field was showing a masked value)' }, { status: 400 });
     }
 
     const payuEnv = (env || 'TEST').toUpperCase() === 'PROD' ? 'PROD' : 'TEST';
