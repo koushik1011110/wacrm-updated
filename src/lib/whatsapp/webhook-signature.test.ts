@@ -66,4 +66,33 @@ describe("verifyMetaWebhookSignature", () => {
       expect(verifyMetaWebhookSignature(body, header)).toBe(false);
     });
   });
+
+  describe("multiple comma-separated secrets", () => {
+    const originalSecret = process.env.META_APP_SECRET;
+    const SECRET_1 = "first_secret_1234567890";
+    const SECRET_2 = "second_secret_0987654321";
+
+    beforeEach(() => {
+      process.env.META_APP_SECRET = `${SECRET_1}, ${SECRET_2}`;
+    });
+
+    afterEach(() => {
+      process.env.META_APP_SECRET = originalSecret;
+    });
+
+    it("accepts signatures from the first secret", () => {
+      const body = '{"object":"whatsapp_business_account"}';
+      expect(verifyMetaWebhookSignature(body, signedHeader(body, SECRET_1))).toBe(true);
+    });
+
+    it("accepts signatures from the second secret", () => {
+      const body = '{"object":"whatsapp_business_account"}';
+      expect(verifyMetaWebhookSignature(body, signedHeader(body, SECRET_2))).toBe(true);
+    });
+
+    it("rejects signatures from an unknown third secret", () => {
+      const body = '{"object":"whatsapp_business_account"}';
+      expect(verifyMetaWebhookSignature(body, signedHeader(body, "unknown_secret"))).toBe(false);
+    });
+  });
 });

@@ -71,10 +71,55 @@ export async function POST(request: Request) {
           (p): p is string => typeof p === 'string'
         )
       : undefined;
-    const templateMessageParams =
+    let templateMessageParams =
       template?.params && !Array.isArray(template.params)
-        ? template.params
+        ? (template.params as Record<string, unknown>)
         : undefined;
+
+    // Support standard Meta Cloud API `components` array if provided in template or top-level body
+    const rawComponents = Array.isArray(template?.components)
+      ? (template.components as Array<Record<string, unknown>>)
+      : Array.isArray(body?.components)
+      ? (body.components as Array<Record<string, unknown>>)
+      : null;
+
+    if (rawComponents && !templateMessageParams) {
+      const parsedBody: string[] = [];
+      const parsedButtonParams: Record<string, string> = {};
+      let parsedHeaderText: string | undefined;
+
+      for (const comp of rawComponents) {
+        const compType = String(comp?.type || '').toLowerCase();
+        const params = Array.isArray(comp?.parameters) ? comp.parameters : [];
+
+        if (compType === 'body') {
+          for (const p of params) {
+            if (p && typeof p === 'object' && 'text' in p) {
+              parsedBody.push(String((p as { text: unknown }).text));
+            }
+          }
+        } else if (compType === 'header') {
+          for (const p of params) {
+            if (p && typeof p === 'object' && 'text' in p) {
+              parsedHeaderText = String((p as { text: unknown }).text);
+            }
+          }
+        } else if (compType === 'button') {
+          const idx = String(comp?.index ?? '0');
+          for (const p of params) {
+            if (p && typeof p === 'object' && 'text' in p) {
+              parsedButtonParams[idx] = String((p as { text: unknown }).text);
+            }
+          }
+        }
+      }
+
+      templateMessageParams = {
+        body: parsedBody,
+        buttonParams: parsedButtonParams,
+        ...(parsedHeaderText ? { headerText: parsedHeaderText } : {}),
+      };
+    }
 
     // Validate the message shape BEFORE resolveConversationByPhone
     // finds-or-creates a contact + conversation, so a bad payload 400s

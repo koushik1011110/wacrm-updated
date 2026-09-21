@@ -22,8 +22,8 @@ export function verifyMetaWebhookSignature(
   rawBody: string,
   signatureHeader: string | null,
 ): boolean {
-  const secret = process.env.META_APP_SECRET
-  if (!secret) {
+  const secretEnv = process.env.META_APP_SECRETS || process.env.META_APP_SECRET
+  if (!secretEnv) {
     console.error(
       '[webhook] META_APP_SECRET is not set — rejecting request. ' +
         'Configure the env var (Meta → App Settings → Basic → App Secret) ' +
@@ -35,13 +35,25 @@ export function verifyMetaWebhookSignature(
   if (!signatureHeader) return false
   if (!signatureHeader.startsWith('sha256=')) return false
 
-  const expected =
-    'sha256=' +
-    crypto.createHmac('sha256', secret).update(rawBody).digest('hex')
+  // Support comma-separated multiple app secrets for multi-Meta App setups:
+  // e.g. META_APP_SECRET="secret1,secret2"
+  const secrets = secretEnv
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
 
   const a = Buffer.from(signatureHeader)
-  const b = Buffer.from(expected)
-  // Bail if lengths differ — timingSafeEqual throws otherwise.
-  if (a.length !== b.length) return false
-  return crypto.timingSafeEqual(a, b)
+
+  for (const secret of secrets) {
+    const expected =
+      'sha256=' +
+      crypto.createHmac('sha256', secret).update(rawBody).digest('hex')
+
+    const b = Buffer.from(expected)
+    if (a.length === b.length && crypto.timingSafeEqual(a, b)) {
+      return true
+    }
+  }
+
+  return false
 }

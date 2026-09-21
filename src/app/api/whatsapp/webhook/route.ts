@@ -155,6 +155,19 @@ export async function GET(request: Request) {
       })
     }
 
+    // Fallback: check against META_WEBHOOK_VERIFY_TOKEN in .env (supports comma-separated)
+    const envVerifyTokens = (process.env.META_WEBHOOK_VERIFY_TOKEN || '')
+      .split(',')
+      .map((t) => t.trim())
+      .filter(Boolean)
+
+    if (envVerifyTokens.includes(verifyToken)) {
+      return new Response(challenge, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      })
+    }
+
     return NextResponse.json(
       { error: 'Verification token mismatch' },
       { status: 403 }
