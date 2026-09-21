@@ -5,7 +5,7 @@ import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { latestUserMessage } from './query'
-import { engineSendText, engineSendCtaUrl, engineSendInteractiveList, engineMarkMessageAsRead } from '@/lib/flows/meta-send'
+import { engineSendText, engineSendCtaUrl, engineSendInteractiveList } from '@/lib/flows/meta-send'
 import { startOfLocalDay } from '@/lib/dashboard/date-utils'
 import { AiConfig } from './types'
 import { trackAiTokenUsage } from './token-tracker'
@@ -191,14 +191,6 @@ export async function dispatchInboundToAiReply(
       if (bookingState.isBookingFlow && (bookingState.replyText || bookingState.interactiveList)) {
         console.log('[booking flow] Handling booking step for customer:', bookingState.step)
 
-        // Mark incoming customer message as READ (blue ticks on WhatsApp)
-        if (incomingMessage?.message_id) {
-          await engineMarkMessageAsRead({
-            accountId,
-            metaMessageId: incomingMessage.message_id,
-          }).catch((err) => console.warn('[auto-reply] mark read error:', err))
-        }
-
         // Simulate natural human typing pause
         await new Promise((resolve) => setTimeout(resolve, 1500))
 
@@ -348,14 +340,6 @@ export async function dispatchInboundToAiReply(
         messageId: incomingMessage.id,
       })
       return
-    }
-
-    // Mark incoming customer message as READ (blue ticks on WhatsApp)
-    if (incomingMessage?.message_id) {
-      await engineMarkMessageAsRead({
-        accountId,
-        metaMessageId: incomingMessage.message_id,
-      }).catch((err) => console.warn('[auto-reply] mark read error:', err))
     }
 
     // Simulate typing pause
