@@ -12,7 +12,6 @@ import { useRealtime } from "@/hooks/use-realtime";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
-import { toast } from "sonner";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -139,7 +138,11 @@ export default function InboxPage() {
       if (!data) return;
       const fetched = normalizeConversation(data);
       setConversations((prev) => {
-        const existing = prev.find((c) => c.id === fetched.id);
+        const existing = prev.find(
+          (c) =>
+            c.id === fetched.id ||
+            (c.contact_id && fetched.contact_id && c.contact_id === fetched.contact_id)
+        );
         if (existing) {
           // Already in state — keep its fields (a realtime UPDATE may
           // have landed while the fetch was in flight and patched
@@ -147,7 +150,7 @@ export default function InboxPage() {
           // the row we just read). Only backfill `contact`, which the
           // realtime payloads never carry.
           return prev.map((c) =>
-            c.id === fetched.id
+            c.id === existing.id
               ? { ...c, contact: c.contact ?? fetched.contact }
               : c,
           );
@@ -279,7 +282,14 @@ export default function InboxPage() {
         // out-of-order delivery would have us prepending a duplicate.
         if (!knownConvIdsRef.current.has(conv.id)) {
           setConversations((prev) => {
-            if (prev.some((c) => c.id === conv.id)) return prev;
+            if (
+              prev.some(
+                (c) =>
+                  c.id === conv.id ||
+                  (c.contact_id && conv.contact_id && c.contact_id === conv.contact_id)
+              )
+            )
+              return prev;
             return [conv, ...prev];
           });
           hydrateConversation(conv.id);
@@ -541,6 +551,53 @@ export default function InboxPage() {
     [activeConversation]
   );
 
+  const handleDeleteMessage = useCallback(
+    (messageId: string) => {
+      setMessages((prev) => {
+        const next = prev.filter((m) => m.id !== messageId);
+        if (activeConversation) {
+          const lastMsg = next.length > 0 ? next[next.length - 1] : null;
+          const lastText = lastMsg
+            ? lastMsg.content_text || (lastMsg.content_type ? `[${lastMsg.content_type}]` : "")
+            : undefined;
+          const lastAt = lastMsg ? lastMsg.created_at : undefined;
+          setConversations((convs) =>
+            convs.map((c) =>
+              c.id === activeConversation.id
+                ? {
+                    ...c,
+                    last_message_text: lastText,
+                    last_message_at: lastAt,
+                  }
+                : c
+            )
+          );
+        }
+        return next;
+      });
+    },
+    [activeConversation]
+  );
+
+  const handleToggleAi = useCallback(
+    (conversationId: string, disabled: boolean) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === conversationId
+            ? { ...c, ai_autoreply_disabled: disabled }
+            : c
+        )
+      );
+      if (activeConversation?.id === conversationId) {
+        setActiveConversation((prev) =>
+          prev ? { ...prev, ai_autoreply_disabled: disabled } : prev
+        );
+      }
+    },
+    [activeConversation]
+  );
+
+
   // On mobile (<lg) we show a SINGLE pane — either the list or the
   // thread — rather than cramming both side-by-side. Selecting a
   // conversation slides the thread in; the thread's back button pops
@@ -610,6 +667,8 @@ export default function InboxPage() {
             onRefresh={handleManualRefresh}
             contactPanelOpen={contactPanelOpen}
             onToggleContactPanel={handleToggleContactPanel}
+            onDeleteMessage={handleDeleteMessage}
+            onToggleAi={handleToggleAi}
           />
         </div>
 
@@ -619,7 +678,11 @@ export default function InboxPage() {
             toggle — which is itself desktop-only — never affects it. */}
         {contactPanelOpen && (
           <div className="hidden lg:block">
-            <ContactSidebar contact={activeContact} />
+            <ContactSidebar
+              contact={activeContact}
+              conversation={activeConversation}
+              onToggleAi={handleToggleAi}
+            />
           </div>
         )}
       </div>

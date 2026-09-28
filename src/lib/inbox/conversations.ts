@@ -36,11 +36,36 @@ export function normalizeConversation(raw: RawConversation): Conversation {
   };
 }
 
+export function dedupeConversations(
+  conversations: Conversation[],
+): Conversation[] {
+  const seen = new Map<string, Conversation>();
+  for (const c of conversations) {
+    const key = c.contact_id || c.id;
+    const existing = seen.get(key);
+    if (!existing) {
+      seen.set(key, c);
+    } else {
+      const existingTime = existing.last_message_at
+        ? new Date(existing.last_message_at).getTime()
+        : 0;
+      const currentTime = c.last_message_at
+        ? new Date(c.last_message_at).getTime()
+        : 0;
+      if (currentTime > existingTime) {
+        seen.set(key, c);
+      }
+    }
+  }
+  return Array.from(seen.values());
+}
+
 export function normalizeConversations(
   rows: RawConversation[],
 ): Conversation[] {
-  return rows.map(normalizeConversation);
+  return dedupeConversations(rows.map(normalizeConversation));
 }
+
 
 export interface ContactFilters {
   /** Tag ids; a conversation matches if its contact has ANY of them (OR). */

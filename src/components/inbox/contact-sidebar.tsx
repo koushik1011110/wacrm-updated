@@ -4,27 +4,36 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import type { Contact, Deal, ContactNote, Tag } from "@/types";
+import type { Contact, Deal, ContactNote, Tag, Conversation } from "@/types";
 import {
   Phone,
   Mail,
   Copy,
   Check,
-  User,
   Tag as TagIcon,
   DollarSign,
   StickyNote,
   Plus,
+  Bot,
+  BotOff,
+  Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
+import { toast } from "sonner";
 
 interface ContactSidebarProps {
   contact: Contact | null;
+  conversation?: Conversation | null;
+  onToggleAi?: (conversationId: string, disabled: boolean) => void;
 }
 
-export function ContactSidebar({ contact }: ContactSidebarProps) {
+export function ContactSidebar({
+  contact,
+  conversation,
+  onToggleAi,
+}: ContactSidebarProps) {
   const { accountId } = useAuth();
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -32,6 +41,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
+  const [togglingAi, setTogglingAi] = useState(false);
 
   const fetchContactData = useCallback(async () => {
     if (!contact) return;
@@ -75,6 +85,42 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchContactData();
   }, [fetchContactData]);
+
+  const handleToggleAi = useCallback(async () => {
+    if (!conversation || togglingAi) return;
+    const isAiDisabled = conversation.ai_autoreply_disabled === true;
+    const nextDisabled = !isAiDisabled;
+    setTogglingAi(true);
+
+    onToggleAi?.(conversation.id, nextDisabled);
+
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("conversations")
+        .update({ ai_autoreply_disabled: nextDisabled })
+        .eq("id", conversation.id);
+
+      if (error) {
+        console.error("Failed to toggle AI agent:", error);
+        onToggleAi?.(conversation.id, isAiDisabled);
+        toast.error("Failed to update AI Agent setting");
+        return;
+      }
+
+      if (nextDisabled) {
+        toast.info("AI Agent paused for this chat. Human mode active.");
+      } else {
+        toast.success("AI Agent enabled! AI will reply to this customer.");
+      }
+    } catch (err) {
+      console.error("Error toggling AI agent:", err);
+      onToggleAi?.(conversation.id, isAiDisabled);
+      toast.error("Network error toggling AI Agent");
+    } finally {
+      setTogglingAi(false);
+    }
+  }, [conversation, togglingAi, onToggleAi]);
 
   const handleCopyPhone = useCallback(async () => {
     if (!contact?.phone) return;
@@ -173,6 +219,63 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               </div>
             )}
           </div>
+
+          {/* AI Agent Status & Switch */}
+          {conversation && (
+            <>
+              <div className="my-4 border-t border-border" />
+              <div>
+                <div className="flex items-center justify-between px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles className="h-3 w-3 text-primary" />
+                    AI Agent
+                  </span>
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                      conversation.ai_autoreply_disabled
+                        ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                        : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                    )}
+                  >
+                    {conversation.ai_autoreply_disabled ? "Paused" : "Active"}
+                  </span>
+                </div>
+                <div className="mt-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs">
+                  <p className="text-muted-foreground">
+                    {conversation.ai_autoreply_disabled
+                      ? "AI auto-reply is turned OFF for this customer. Only human agents can reply."
+                      : "AI answers customer messages automatically using your business knowledge."}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleToggleAi}
+                    disabled={togglingAi}
+                    className={cn(
+                      "mt-2.5 w-full h-7 text-xs font-medium gap-1.5",
+                      conversation.ai_autoreply_disabled
+                        ? "border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                        : "border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                    )}
+                  >
+                    {conversation.ai_autoreply_disabled ? (
+                      <>
+                        <Bot className="h-3.5 w-3.5 text-emerald-400" />
+                        Enable AI Agent
+                      </>
+                    ) : (
+                      <>
+                        <BotOff className="h-3.5 w-3.5 text-amber-400" />
+                        Turn OFF AI (Human Mode)
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Divider */}
           <div className="my-4 border-t border-border" />

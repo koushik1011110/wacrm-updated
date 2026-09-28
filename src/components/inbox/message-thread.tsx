@@ -26,6 +26,8 @@ import {
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
+  Bot,
+  BotOff,
 } from "lucide-react";
 import { format, isToday, isYesterday, differenceInHours } from "date-fns";
 import { Badge } from "@/components/ui/badge";
@@ -36,7 +38,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "./message-bubble";
 import { MessageActions } from "./message-actions";
 import {
@@ -106,6 +107,8 @@ interface MessageThreadProps {
    */
   contactPanelOpen?: boolean;
   onToggleContactPanel?: () => void;
+  onDeleteMessage?: (messageId: string) => void;
+  onToggleAi?: (conversationId: string, disabled: boolean) => void;
 }
 
 function formatDateSeparator(dateStr: string): string {
@@ -164,6 +167,8 @@ export function MessageThread({
   onRefresh,
   contactPanelOpen,
   onToggleContactPanel,
+  onDeleteMessage,
+  onToggleAi,
 }: MessageThreadProps) {
   const { user } = useAuth();
   const { getPresence, getRow, now } = usePresence();
@@ -172,6 +177,7 @@ export function MessageThread({
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
+  const [togglingAi, setTogglingAi] = useState(false);
   // Purely visual spin state for the manual-refresh button. The actual
   // refetch is fire-and-forget through `onRefresh` (which bumps the
   // parent's resyncToken); the 700ms spin is just feedback so the click
@@ -213,6 +219,27 @@ export function MessageThread({
           return;
         }
         setProfiles((data as Profile[]) ?? []);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch approved templates to enrich template message cards with header, footer & buttons
+  const [templatesMap, setTemplatesMap] = useState<Record<string, MessageTemplate>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createClient();
+    supabase
+      .from("message_templates")
+      .select("*")
+      .then(({ data, error }) => {
+        if (cancelled || error || !data) return;
+        const map: Record<string, MessageTemplate> = {};
+        for (const t of data as MessageTemplate[]) {
+          map[t.name] = t;
+        }
+        setTemplatesMap(map);
       });
     return () => {
       cancelled = true;
@@ -778,6 +805,44 @@ export function MessageThread({
     [conversation, onAssignChange],
   );
 
+  const isAiDisabled = conversation?.ai_autoreply_disabled === true;
+
+  const handleToggleAiAgent = useCallback(async () => {
+    if (!conversation || togglingAi) return;
+    const nextDisabled = !isAiDisabled;
+    setTogglingAi(true);
+
+    // Optimistic state update
+    onToggleAi?.(conversation.id, nextDisabled);
+
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("conversations")
+        .update({ ai_autoreply_disabled: nextDisabled })
+        .eq("id", conversation.id);
+
+      if (error) {
+        console.error("Failed to toggle AI agent:", error);
+        onToggleAi?.(conversation.id, isAiDisabled);
+        toast.error("Failed to update AI Agent setting");
+        return;
+      }
+
+      if (nextDisabled) {
+        toast.info("AI Agent paused for this chat. Human mode active.");
+      } else {
+        toast.success("AI Agent enabled! AI will reply to this customer.");
+      }
+    } catch (err) {
+      console.error("Error toggling AI agent:", err);
+      onToggleAi?.(conversation.id, isAiDisabled);
+      toast.error("Network error toggling AI Agent");
+    } finally {
+      setTogglingAi(false);
+    }
+  }, [conversation, isAiDisabled, togglingAi, onToggleAi]);
+
   // Empty state — same WhatsApp-style doodle background as the active
   // thread below, so swapping between empty/selected doesn't change the
   // pattern under the user's eye.
@@ -905,6 +970,39 @@ export function MessageThread({
             </button>
           )}
 
+          {/* Meta WhatsApp Business AI Agent Toggle */}
+          <button
+            type="button"
+            onClick={handleToggleAiAgent}
+            disabled={togglingAi}
+            aria-label={isAiDisabled ? "Enable AI Agent" : "Disable AI Agent"}
+            title={
+              isAiDisabled
+                ? "AI Agent is OFF (Human Mode). Click to let AI reply to incoming customer messages."
+                : "AI Agent is ON. AI will reply to customer messages automatically. Click to switch to Human Only."
+            }
+            className={cn(
+              "inline-flex items-center gap-1.5 h-7 px-2.5 text-xs font-medium rounded-md transition-all duration-150 border disabled:opacity-60 cursor-pointer shadow-xs",
+              isAiDisabled
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 hover:border-amber-500/50"
+                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 hover:border-emerald-500/50"
+            )}
+          >
+            {isAiDisabled ? (
+              <>
+                <BotOff className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                <span className="hidden sm:inline">AI Agent:</span>
+                <span className="font-semibold text-amber-300">OFF</span>
+              </>
+            ) : (
+              <>
+                <Bot className="h-3.5 w-3.5 text-emerald-400 shrink-0 animate-pulse" />
+                <span className="hidden sm:inline">AI Agent:</span>
+                <span className="font-semibold text-emerald-300">ON</span>
+              </>
+            )}
+          </button>
+
           {/* Status dropdown */}
           <DropdownMenu>
             <DropdownMenuTrigger className={cn(
@@ -997,6 +1095,26 @@ export function MessageThread({
         </div>
       </div>
 
+      {/* Human Mode Alert Banner when AI Agent is paused */}
+      {isAiDisabled && (
+        <div className="flex items-center justify-between border-b border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-400">
+          <div className="flex items-center gap-2 truncate">
+            <BotOff className="h-3.5 w-3.5 shrink-0 text-amber-400" />
+            <span className="truncate">
+              <strong>Human Mode:</strong> AI Agent is paused for this chat. Replies are not automated.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleToggleAiAgent}
+            disabled={togglingAi}
+            className="ml-3 shrink-0 rounded px-2 py-0.5 font-medium text-amber-300 underline underline-offset-2 hover:text-amber-100 disabled:opacity-50"
+          >
+            Enable AI
+          </button>
+        </div>
+      )}
+
       {/* Messages Area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
         {loading ? (
@@ -1052,6 +1170,7 @@ export function MessageThread({
                         onReact={(emoji) => {
                           if (emoji) void postReaction(msg.id, emoji);
                         }}
+                        onDelete={onDeleteMessage}
                       >
                         <MessageBubble
                           message={msg}
@@ -1059,6 +1178,8 @@ export function MessageThread({
                           reactions={msgReactions}
                           currentUserId={user?.id}
                           onToggleReaction={handlePillToggle}
+                          templateDef={msg.template_name ? templatesMap[msg.template_name] : undefined}
+                          contactName={contact?.name || contact?.phone}
                         />
                       </MessageActions>
                     );

@@ -299,6 +299,18 @@ export async function sendMessageToConversation(
       );
     }
     templateRow = data ?? null;
+    if (!templateRow) {
+      const { data: fallbackData } = await db
+        .from('message_templates')
+        .select('*')
+        .eq('account_id', accountId)
+        .eq('name', templateName)
+        .limit(1)
+        .maybeSingle();
+      if (fallbackData && isMessageTemplate(fallbackData)) {
+        templateRow = fallbackData;
+      }
+    }
   }
 
   const attempt = async (phone: string): Promise<string> => {
@@ -384,6 +396,78 @@ export async function sendMessageToConversation(
       .eq('id', contact.id);
   }
 
+  // Resolve content_text and media_url so template messages persist
+  // readable text and media headers to both messages and conversation preview.
+  let finalContentText = contentText || null;
+  let finalMediaUrl = mediaUrl || null;
+  let finalInteractiveReplyId: string | null = null;
+
+  if (messageType === 'template') {
+    if (!finalContentText) {
+      const rawBody =
+        templateMessageParams &&
+        typeof templateMessageParams === 'object' &&
+        'body' in templateMessageParams &&
+        Array.isArray((templateMessageParams as { body: unknown }).body)
+          ? (templateMessageParams as { body: string[] }).body
+          : templateParams;
+      const bodyParams = Array.isArray(rawBody) ? rawBody : [];
+
+      if (templateRow?.body_text) {
+        finalContentText = templateRow.body_text.replace(
+          /\{\{(\d+)\}\}/g,
+          (_, raw) => {
+            const idx = Number(raw) - 1;
+            return bodyParams[idx] ?? `{{${raw}}}`;
+          }
+        );
+      } else if (templateName) {
+        finalContentText = `[Template: ${templateName}]`;
+      }
+    }
+
+    if (!finalMediaUrl) {
+      if (templateRow?.header_media_url) {
+        finalMediaUrl = templateRow.header_media_url;
+      } else if (
+        templateMessageParams &&
+        typeof templateMessageParams === 'object' &&
+        'headerMediaUrl' in templateMessageParams &&
+        typeof (templateMessageParams as { headerMediaUrl?: string }).headerMediaUrl === 'string'
+      ) {
+        finalMediaUrl = (templateMessageParams as { headerMediaUrl: string }).headerMediaUrl;
+      }
+    }
+
+    if (templateRow?.buttons && templateRow.buttons.length > 0) {
+      const buttonParamsMap =
+        templateMessageParams &&
+        typeof templateMessageParams === 'object' &&
+        'buttonParams' in templateMessageParams &&
+        typeof (templateMessageParams as { buttonParams?: unknown }).buttonParams === 'object'
+          ? (templateMessageParams as { buttonParams: Record<string | number, string> }).buttonParams
+          : null;
+
+      const resolvedButtons = templateRow.buttons.map((btn, idx) => {
+        if (btn.type === 'URL') {
+          const rawParam = buttonParamsMap?.[idx] ?? buttonParamsMap?.[String(idx)];
+          let resolvedUrl = btn.url;
+          if (rawParam) {
+            const cleanParam = String(rawParam).trim();
+            if (cleanParam.startsWith('http://') || cleanParam.startsWith('https://')) {
+              resolvedUrl = cleanParam;
+            } else {
+              resolvedUrl = btn.url.replace(/\{\{1\}\}/g, cleanParam);
+            }
+          }
+          return { ...btn, url: resolvedUrl };
+        }
+        return btn;
+      });
+      finalInteractiveReplyId = JSON.stringify(resolvedButtons);
+    }
+  }
+
   // Persist the sent message. Field names MUST match the messages
   // schema (see 001_initial_schema.sql).
   const { data: messageRecord, error: msgError } = await db
@@ -392,12 +476,13 @@ export async function sendMessageToConversation(
       conversation_id: conversationId,
       sender_type: 'agent',
       content_type: messageType,
-      content_text: contentText || null,
-      media_url: mediaUrl || null,
+      content_text: finalContentText,
+      media_url: finalMediaUrl,
       template_name: templateName || null,
       message_id: waMessageId,
       status: 'sent',
       reply_to_message_id: replyToMessageId || null,
+      interactive_reply_id: finalInteractiveReplyId,
     })
     .select()
     .single();
@@ -414,7 +499,7 @@ export async function sendMessageToConversation(
   await db
     .from('conversations')
     .update({
-      last_message_text: contentText || `[${messageType}]`,
+      last_message_text: finalContentText || `[${messageType}]`,
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })

@@ -56,8 +56,9 @@ export function buildSystemPrompt(args: {
   mode: 'draft' | 'auto_reply'
   /** Knowledge-base excerpts retrieved for the current question. */
   knowledge?: string[]
+  allowHandoff?: boolean
 }): string {
-  const { userPrompt, mode, knowledge } = args
+  const { userPrompt, mode, knowledge, allowHandoff = true } = args
   const parts: string[] = [
     'You are a customer-messaging assistant for a business that uses KK WABA, a WhatsApp API CRM. ' +
     'You are shown the recent WhatsApp conversation between the business (assistant) and a customer (user). ' +
@@ -69,9 +70,15 @@ export function buildSystemPrompt(args: {
   ]
 
   if (mode === 'auto_reply') {
-    parts.push(
-      `You are replying automatically with no human in the loop. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — reply with exactly ${HANDOFF_SENTINEL} and nothing else. A human agent will then take over. Prefer handing off over guessing.`,
-    )
+    if (allowHandoff) {
+      parts.push(
+        `You are replying automatically with no human in the loop. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — reply with exactly ${HANDOFF_SENTINEL} and nothing else. A human agent will then take over. Prefer handing off over guessing.`,
+      )
+    } else {
+      parts.push(
+        'You are replying automatically as the business AI assistant. Always provide a helpful, polite, and constructive answer directly to the customer. Do not transfer to a human or give up; answer using your knowledge and general business context.',
+      )
+    }
   }
 
   if (userPrompt && userPrompt.trim()) {
@@ -81,7 +88,9 @@ export function buildSystemPrompt(args: {
   if (knowledge && knowledge.length > 0) {
     const fallback =
       mode === 'auto_reply'
-        ? `if they don't cover the question, do not guess — reply with exactly ${HANDOFF_SENTINEL} so a human can help`
+        ? allowHandoff
+          ? `if they don't cover the question, do not guess — reply with exactly ${HANDOFF_SENTINEL} so a human can help`
+          : "if they don't cover the question, provide a polite, helpful reply with general context and ask the customer for any specific details needed"
         : "if they don't cover the question, don't guess — say you'll check and follow up"
     parts.push(
       'Knowledge base — excerpts from the business\'s own documentation, retrieved for this question. ' +

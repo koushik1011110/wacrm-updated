@@ -159,6 +159,7 @@ export interface Conversation {
   created_at: string;
   updated_at: string;
   contact?: Contact;
+  ai_autoreply_disabled?: boolean;
 }
 
 // ============================================================

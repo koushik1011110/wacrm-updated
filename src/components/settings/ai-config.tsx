@@ -27,6 +27,7 @@ import {
 import { SettingsPanelHead } from './settings-panel-head';
 import { AiKnowledgeCard } from './ai-knowledge';
 import { AiUsageCard } from './ai-usage-card';
+import { AiWelcomeMenu } from './ai-welcome-menu';
 import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
 import type { AiProvider } from '@/lib/ai/types';
 
@@ -488,6 +489,9 @@ export function AiConfig() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Initial Qualification Buttons / Welcome Intent Menu for New Inbound Chats */}
+        <AiWelcomeMenu canEdit={canEdit} />
 
         <AiUsageCard />
 

@@ -8,6 +8,9 @@ const h = vi.hoisted(() => ({
   retrieveKnowledge: vi.fn(),
   generateReply: vi.fn(),
   engineSendText: vi.fn(),
+  engineSendInteractiveButtons: vi.fn(),
+  engineSendInteractiveList: vi.fn(),
+  engineSendCtaUrl: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
@@ -15,6 +18,9 @@ const h = vi.hoisted(() => ({
     updatePayload: null as Record<string, unknown> | null,
     rpcCalls: [] as { name: string; args: unknown }[],
     sentTodayCount: 0,
+    customerMsgCount: 0,
+    messageText: 'hi',
+    welcomeMenuAutomation: null as Record<string, unknown> | null,
   },
 }))
 
@@ -22,22 +28,29 @@ vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
-vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }))
+vi.mock('@/lib/flows/meta-send', () => ({
+  engineSendText: h.engineSendText,
+  engineSendInteractiveButtons: h.engineSendInteractiveButtons,
+  engineSendInteractiveList: h.engineSendInteractiveList,
+  engineSendCtaUrl: h.engineSendCtaUrl,
+}))
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
       if (table === 'automations') {
-        const chain = {
+        const chain: any = {
           select: () => chain,
           eq: () => chain,
           in: () => chain,
           limit: () =>
             Promise.resolve({ data: h.state.autoResponders, error: null }),
+          maybeSingle: () =>
+            Promise.resolve({ data: h.state.welcomeMenuAutomation ?? null, error: null }),
         }
         return chain
       }
       if (table === 'messages') {
-        const chain = {
+        const chain: any = {
           select: () => chain,
           eq: () => chain,
           order: () => chain,
@@ -45,9 +58,29 @@ vi.mock('./admin-client', () => ({
           gte: () =>
             Promise.resolve({ count: h.state.sentTodayCount, error: null }),
           single: () =>
-            Promise.resolve({ data: { id: 'msg-1', content_text: 'hi', message_id: 'wamid-1' }, error: null }),
+            Promise.resolve({
+              data: {
+                id: 'msg-1',
+                content_text: h.state.messageText ?? 'hi',
+                message_id: 'wamid-1',
+              },
+              error: null,
+            }),
           maybeSingle: () =>
-            Promise.resolve({ data: { id: 'msg-1', content_text: 'hi', message_id: 'wamid-1' }, error: null }),
+            Promise.resolve({
+              data: {
+                id: 'msg-1',
+                content_text: h.state.messageText ?? 'hi',
+                message_id: 'wamid-1',
+              },
+              error: null,
+            }),
+          then: (resolve: any) =>
+            resolve({
+              count: h.state.customerMsgCount ?? 0,
+              data: [],
+              error: null,
+            }),
         }
         return chain
       }
@@ -74,24 +107,33 @@ vi.mock('./admin-client', () => ({
         return chain
       }
       // fallback
-      return {
-        select: () => ({
-          eq: () => ({
-            maybeSingle: () =>
-              Promise.resolve({ data: h.state.conv, error: null }),
-            single: () =>
-              Promise.resolve({ data: h.state.conv, error: null }),
-          }),
-        }),
+      const chain: any = {
+        select: () => chain,
+        eq: () => chain,
+        order: () => chain,
+        limit: () => chain,
+        insert: () => chain,
+        upsert: () => chain,
+        delete: () => chain,
         update: (payload: Record<string, unknown>) => {
           h.state.updatePayload = payload
-          return { eq: () => Promise.resolve({ error: null }) }
+          return chain
         },
+        single: () =>
+          Promise.resolve({ data: h.state.conv, error: null }),
+        maybeSingle: () =>
+          Promise.resolve({ data: h.state.conv, error: null }),
+        then: (resolve: any) =>
+          resolve({ data: [], error: null }),
       }
+      return chain
     },
     rpc: (name: string, args: unknown) => {
-      h.state.rpcCalls.push({ name, args })
-      return Promise.resolve({ data: h.state.claim, error: null })
+      if (name === 'claim_ai_reply_slot') {
+        h.state.rpcCalls.push({ name, args })
+        return Promise.resolve({ data: h.state.claim, error: null })
+      }
+      return Promise.resolve({ data: null, error: null })
     },
   }),
 }))
@@ -135,6 +177,9 @@ beforeEach(() => {
   h.state.updatePayload = null
   h.state.rpcCalls = []
   h.state.sentTodayCount = 0
+  h.state.customerMsgCount = 0
+  h.state.messageText = 'hi'
+  h.state.welcomeMenuAutomation = null
   h.loadAiConfig.mockResolvedValue(aiConfig())
   h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'hi' }])
   h.retrieveKnowledge.mockResolvedValue([])
@@ -283,3 +328,152 @@ describe('dispatchInboundToAiReply — existing contacts', () => {
     })
   })
 })
+
+describe('dispatchInboundToAiReply — buddiesproduction qualification flow', () => {
+  const BUDDIES_ARGS = {
+    accountId: '468be0e7-bcd6-463a-a974-d1569dbcfd36',
+    conversationId: 'conv-1',
+    contactId: 'contact-1',
+    configOwnerUserId: 'user-buddies',
+    incomingMessageId: 'msg-1',
+  }
+
+  it('sends 3 interactive qualification buttons on initial greeting', async () => {
+    await dispatchInboundToAiReply(BUDDIES_ARGS)
+    expect(h.engineSendInteractiveButtons).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: '468be0e7-bcd6-463a-a974-d1569dbcfd36',
+        headerText: 'Buddies Production',
+        buttons: [
+          { id: 'buddies_intent_rental', title: 'Rental Booking' },
+          { id: 'buddies_intent_inquiry', title: 'General Inquiry' },
+          { id: 'buddies_intent_team', title: 'Talk to Team' },
+        ],
+      })
+    )
+  })
+
+  it('never disables AI or triggers silent handoff on general inquiry, sends AI response instead', async () => {
+    h.state.customerMsgCount = 3
+    h.state.messageText = 'What are your studio timings and address?'
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    h.state.sentTodayCount = 2
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: 'What are your studio timings and address?' },
+    ])
+    await dispatchInboundToAiReply({
+      ...BUDDIES_ARGS,
+      incomingMessageId: 'msg-inquiry',
+    })
+    // Must NOT disable AI
+    expect(h.state.updatePayload).not.toEqual({ ai_autoreply_disabled: true })
+    // Must send an AI response directly to the customer
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: '468be0e7-bcd6-463a-a974-d1569dbcfd36',
+        isAiReply: true,
+      })
+    )
+  })
+
+  it('provides casting and acting instructions in system prompt for buddies production', async () => {
+    h.state.customerMsgCount = 3
+    h.state.messageText = 'Mujhe acting karni hai aapki upcoming short film me'
+    h.generateReply.mockResolvedValue({
+      text: 'Namaste! Bilkul, kripya apna Name, Age, City, 2-3 recent photos aur Instagram profile link share kar dijiye. Hum aapka data casting database me save kar lenge.',
+      handoff: false,
+    })
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: 'Mujhe acting karni hai aapki upcoming short film me' },
+    ])
+    await dispatchInboundToAiReply({
+      ...BUDDIES_ARGS,
+      incomingMessageId: 'msg-acting',
+    })
+    expect(h.generateReply).toHaveBeenCalled()
+    const promptArg = h.generateReply.mock.calls[0][0].systemPrompt as string
+    expect(promptArg).toContain('Acting / Casting / Short Film')
+    expect(promptArg).toContain('Social media profile')
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: '468be0e7-bcd6-463a-a974-d1569dbcfd36',
+        text: expect.stringContaining('casting database'),
+      })
+    )
+  })
+
+  it('sends custom interactive buttons for any account when configured in automations', async () => {
+    h.state.welcomeMenuAutomation = {
+      id: 'auto-custom',
+      is_active: true,
+      trigger_config: {
+        header_text: 'City Health Clinic',
+        body_text: 'Welcome! How can we help you?',
+        footer_text: 'Select an option',
+        buttons: [
+          { id: 'clinic_btn_1', title: 'Book Appointment', action: 'booking' },
+          { id: 'clinic_btn_2', title: 'Consult Doctor', action: 'ai_inquiry' },
+          { id: 'clinic_btn_3', title: 'Talk to Reception', action: 'talk_to_team' },
+        ],
+      },
+    }
+
+    await dispatchInboundToAiReply(ARGS) // generic account acct-1
+
+    expect(h.engineSendInteractiveButtons).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: 'acct-1',
+        headerText: 'City Health Clinic',
+        bodyText: 'Welcome! How can we help you?',
+        buttons: [
+          { id: 'clinic_btn_1', title: 'Book Appointment' },
+          { id: 'clinic_btn_2', title: 'Consult Doctor' },
+          { id: 'clinic_btn_3', title: 'Talk to Reception' },
+        ],
+      })
+    )
+  })
+
+  it('assigns conversation to specific agent when talk_to_team button with assigned_agent_id is clicked', async () => {
+    h.state.welcomeMenuAutomation = {
+      id: 'auto-custom',
+      is_active: true,
+      trigger_config: {
+        header_text: 'Support Desk',
+        body_text: 'Choose an option',
+        buttons: [
+          {
+            id: 'btn_support_sarah',
+            title: 'Talk to Support',
+            action: 'talk_to_team',
+            assigned_agent_id: 'user-sarah-123',
+            reply_text: 'Connecting you with Sarah from our team.',
+          },
+        ],
+      },
+    }
+
+    // Customer clicks or replies with the button
+    h.state.messageText = 'Talk to Support'
+    await dispatchInboundToAiReply({
+      ...ARGS,
+      incomingMessageId: 'msg-team',
+    })
+
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        text: 'Connecting you with Sarah from our team.',
+      })
+    )
+    expect(h.state.updatePayload).toEqual({
+      ai_autoreply_disabled: true,
+      status: 'open',
+      assigned_agent_id: 'user-sarah-123',
+    })
+  })
+})
+
+
+
+

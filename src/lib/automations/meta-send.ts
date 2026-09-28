@@ -144,14 +144,43 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // Meta message id. sender_type='bot' distinguishes automation sends
   // from manual agent sends.
   const content_type = input.kind === 'template' ? 'template' : 'text'
-  const content_text = input.kind === 'text' ? input.text : null
   const template_name = input.kind === 'template' ? input.templateName : null
+
+  let content_text: string | null = null
+  let media_url: string | null = null
+
+  if (input.kind === 'text') {
+    content_text = input.text
+  } else {
+    // Template send: lookup template text to persist readable message
+    const { data: tRow } = await db
+      .from('message_templates')
+      .select('*')
+      .eq('account_id', input.accountId)
+      .eq('name', input.templateName)
+      .limit(1)
+      .maybeSingle()
+
+    if (tRow?.body_text) {
+      const params = input.params ?? []
+      content_text = tRow.body_text.replace(/\{\{(\d+)\}\}/g, (_: string, raw: string) => {
+        const idx = Number(raw) - 1
+        return params[idx] ?? `{{${raw}}}`
+      })
+    } else {
+      content_text = `[Template: ${input.templateName}]`
+    }
+    if (tRow?.header_media_url) {
+      media_url = tRow.header_media_url
+    }
+  }
 
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
     sender_type: 'bot',
     content_type,
     content_text,
+    media_url,
     template_name,
     message_id: waMessageId,
     status: 'sent',
@@ -162,11 +191,13 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)
   }
 
+  const fallbackLastMessage =
+    input.kind === 'template' ? `[template:${input.templateName}]` : input.text
+
   await db
     .from('conversations')
     .update({
-      last_message_text:
-        input.kind === 'template' ? `[template:${input.templateName}]` : input.text,
+      last_message_text: content_text || fallbackLastMessage,
       last_message_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })

@@ -79,10 +79,29 @@ export async function GET() {
       provider = 'deepseek'
       model = model.slice('deepseek:'.length)
     }
+
+    const { data: welcomeMenuAuto } = await supabase
+      .from('automations')
+      .select('id, is_active, trigger_config')
+      .eq('account_id', accountId)
+      .eq('trigger_type', 'welcome_intent_menu')
+      .maybeSingle()
+
+    const welcomeMenu = welcomeMenuAuto
+      ? {
+          enabled: Boolean(welcomeMenuAuto.is_active),
+          header_text: (welcomeMenuAuto.trigger_config as any)?.header_text ?? '',
+          body_text: (welcomeMenuAuto.trigger_config as any)?.body_text ?? '',
+          footer_text: (welcomeMenuAuto.trigger_config as any)?.footer_text ?? '',
+          buttons: (welcomeMenuAuto.trigger_config as any)?.buttons ?? [],
+        }
+      : null
+
     return NextResponse.json({
       configured: true,
       has_key: !!api_key,
       has_embeddings_key: !!embeddings_api_key,
+      welcome_menu: welcomeMenu,
       ...safe,
       provider,
       model,
@@ -316,11 +335,54 @@ export async function POST(request: Request) {
       )
     }
 
-    // Refresh/reload schema cache after save (fails silently if function not created yet)
-    try {
-      await supabase.rpc('reload_schema')
-    } catch (e) {
-      // Ignored if migration hasn't been applied yet
+    // Save welcome_menu if provided in request body
+    if (body.welcome_menu && typeof body.welcome_menu === 'object') {
+      try {
+        const wm = body.welcome_menu
+        const isEnabled = Boolean(wm.enabled)
+        const headerText = typeof wm.header_text === 'string' ? wm.header_text.slice(0, 60).trim() : ''
+        const bodyText = typeof wm.body_text === 'string' ? wm.body_text.slice(0, 1024).trim() : ''
+        const footerText = typeof wm.footer_text === 'string' ? wm.footer_text.slice(0, 60).trim() : ''
+        const buttons = Array.isArray(wm.buttons) ? wm.buttons.slice(0, 3) : []
+
+        const { data: existingAuto } = await supabase
+          .from('automations')
+          .select('id')
+          .eq('account_id', accountId)
+          .eq('trigger_type', 'welcome_intent_menu')
+          .maybeSingle()
+
+        if (existingAuto) {
+          await supabase
+            .from('automations')
+            .update({
+              is_active: isEnabled,
+              trigger_config: {
+                header_text: headerText,
+                body_text: bodyText,
+                footer_text: footerText,
+                buttons,
+              },
+            })
+            .eq('id', existingAuto.id)
+        } else {
+          await supabase.from('automations').insert({
+            account_id: accountId,
+            user_id: userId,
+            name: 'Welcome Intent Qualification Menu',
+            trigger_type: 'welcome_intent_menu',
+            is_active: isEnabled,
+            trigger_config: {
+              header_text: headerText,
+              body_text: bodyText,
+              footer_text: footerText,
+              buttons,
+            },
+          })
+        }
+      } catch (wmErr) {
+        console.error('[ai/config POST] Failed to save welcome menu automation:', wmErr)
+      }
     }
 
     return NextResponse.json({ success: true })

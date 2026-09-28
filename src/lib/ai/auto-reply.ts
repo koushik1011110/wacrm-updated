@@ -5,11 +5,57 @@ import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { latestUserMessage } from './query'
-import { engineSendText, engineSendCtaUrl, engineSendInteractiveList } from '@/lib/flows/meta-send'
+import { engineSendText, engineSendCtaUrl, engineSendInteractiveList, engineSendInteractiveButtons } from '@/lib/flows/meta-send'
 import { startOfLocalDay } from '@/lib/dashboard/date-utils'
 import { AiConfig } from './types'
 import { trackAiTokenUsage } from './token-tracker'
 import { processBookingFlow } from '@/lib/booking/flow'
+
+const BUDDIES_PRODUCTION_ACCOUNT_ID = '468be0e7-bcd6-463a-a974-d1569dbcfd36'
+const BUDDIES_PRODUCTION_EMAIL = 'buddiesproduction2017@gmail.com'
+
+const BUDDIES_DEFAULT_PROMPT = `You are the official WhatsApp assistant for Buddies Production (buddiesproduction2017@gmail.com).
+Buddies Production is an active film & media production house, photography and video production studio, and professional cinema/camera equipment rental service in India.
+
+About Buddies Production:
+1. Media & Production House: Short films, movies, songs, music videos, creative shoots, video production, and casting.
+2. Equipment Rental & Studio: Camera gear (Sony, Canon, Cinema & DSLR), lenses, lighting setups, 4K drones, and shoot studio rental.
+
+Special Handling for Acting / Casting / Short Film / Role / Song Inquiries:
+- Most inquiries come from actors, models, and artists asking about acting roles, auditions, short films, casting, songs, or music video opportunities.
+- When someone asks about acting, casting, auditions, short films, working in movies/songs, or collaboration:
+  1. Respond like a warm, polite, and helpful human from the Buddies Production team (NOT a robotic AI, avoid long complicated formal essays).
+  2. Acknowledge their interest warmly and concisely.
+  3. Ask them in simple Hindi/Hinglish (or English, matching their language) to share their details so their profile can be saved for future casting needs & upcoming projects:
+     • Name & Age
+     • Current City / Location
+     • 2-3 Recent Photos (Clear Headshot & Full look)
+     • Social media profile / Work link (e.g. Instagram profile link, portfolio, or showreel)
+  4. Assure them that their profile will be saved in Buddies Production's casting database, and the team will reach out whenever a suitable role or project comes up.
+  5. Keep it natural, human-like, and concise — do NOT drag the conversation into long chatting.
+
+Rules for General Inquiries:
+1. Tone: Warm, natural, concise, and human-like. Respond in Hindi, Hinglish, or English matching the customer's language.
+2. For Equipment Rental & Studio queries: Prefer Knowledge Base documents if provided to answer accurately regarding camera gear, studio availability, and policies.
+3. If specific equipment details are not in the Knowledge Base, DO NOT hand off to a human or remain silent! Answer helpfully with general guidance and politely ask for their required dates or gear.
+4. NEVER make up or discuss unrelated topics (such as real estate, godowns, shops, food, etc.).
+5. If customer wants to book equipment or studio, invite them to select 'Rental Booking' or type 'Book'.
+6. NEVER emit [[HANDOFF]] and NEVER hand off to a human for general inquiries or casting inquiries. Always reply directly as AI.`
+
+async function isBuddiesProductionAccount(db: any, accountId: string): Promise<boolean> {
+  if (accountId === BUDDIES_PRODUCTION_ACCOUNT_ID) return true
+  try {
+    const { data } = await db
+      .from('profiles')
+      .select('email')
+      .eq('account_id', accountId)
+      .eq('role', 'owner')
+      .maybeSingle()
+    return data?.email === BUDDIES_PRODUCTION_EMAIL
+  } catch {
+    return false
+  }
+}
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -176,6 +222,231 @@ export async function dispatchInboundToAiReply(
     const messageTextToProcess =
       incomingMessage.interactive_reply_id || incomingMessage.content_text || ''
 
+    // 0. WELCOME INTENT QUALIFICATION MENU (Configurable for all accounts via UI)
+    const isBuddies = await isBuddiesProductionAccount(db, accountId)
+
+    let welcomeMenu: {
+      enabled: boolean
+      header_text?: string
+      body_text?: string
+      footer_text?: string
+      buttons?: Array<{
+        id: string
+        title: string
+        action: 'booking' | 'ai_inquiry' | 'talk_to_team' | 'custom_reply'
+        reply_text?: string
+        assigned_agent_id?: string | null
+      }>
+    } | null = null
+
+    try {
+      const { data: welcomeAuto } = await db
+        .from('automations')
+        .select('id, is_active, trigger_config')
+        .eq('account_id', accountId)
+        .eq('trigger_type', 'welcome_intent_menu')
+        .maybeSingle()
+
+      if (welcomeAuto) {
+        welcomeMenu = {
+          enabled: Boolean(welcomeAuto.is_active),
+          header_text: (welcomeAuto.trigger_config as any)?.header_text,
+          body_text: (welcomeAuto.trigger_config as any)?.body_text,
+          footer_text: (welcomeAuto.trigger_config as any)?.footer_text,
+          buttons: (welcomeAuto.trigger_config as any)?.buttons,
+        }
+      }
+    } catch (wmErr) {
+      console.warn('[welcome menu] Error loading welcome automation:', wmErr)
+    }
+
+    // Default configuration for Buddies Production if not explicitly configured in UI
+    if (!welcomeMenu && isBuddies) {
+      welcomeMenu = {
+        enabled: true,
+        header_text: 'Buddies Production',
+        body_text:
+          'Namaste! 🙏 Welcome to Buddies Production.\n\nAapki behtar sahayata ke liye, kripya confirm karein ki aap kis regarding connect karna chahte hain?',
+        footer_text: 'Please select an option below',
+        buttons: [
+          { id: 'buddies_intent_rental', title: 'Rental Booking', action: 'booking' },
+          {
+            id: 'buddies_intent_inquiry',
+            title: 'General Inquiry',
+            action: 'ai_inquiry',
+            reply_text: 'Please let us know your query, how can we help you today?',
+          },
+          { id: 'buddies_intent_team', title: 'Talk to Team', action: 'talk_to_team' },
+        ],
+      }
+    }
+
+    if (
+      welcomeMenu &&
+      welcomeMenu.enabled &&
+      Array.isArray(welcomeMenu.buttons) &&
+      welcomeMenu.buttons.length > 0
+    ) {
+      const replyId = incomingMessage.interactive_reply_id || ''
+      const lowerText = (incomingMessage.content_text || '').toLowerCase().trim()
+
+      // Match clicked button or matching text
+      const matchedBtn = welcomeMenu.buttons.find(
+        (b) =>
+          (replyId && b.id === replyId) ||
+          (b.title && lowerText === b.title.toLowerCase().trim()) ||
+          (b.id === 'buddies_intent_rental' && lowerText === 'rental booking') ||
+          (b.id === 'buddies_intent_inquiry' && lowerText === 'general inquiry') ||
+          (b.id === 'buddies_intent_team' &&
+            (lowerText === 'talk to team' ||
+              lowerText === 'team' ||
+              lowerText.includes('team se baat') ||
+              lowerText.includes('agent se baat')))
+      )
+
+      if (matchedBtn) {
+        console.log(
+          `[welcome menu] Customer selected intent: ${matchedBtn.title} (action: ${matchedBtn.action})`
+        )
+
+        // 1. Action: BOOKING (Triggers automated booking flow)
+        if (matchedBtn.action === 'booking') {
+          const bookingState = await processBookingFlow(
+            db,
+            accountId,
+            conversation.id,
+            contact.id,
+            matchedBtn.title,
+            configOwnerUserId
+          )
+          if (bookingState.interactiveList) {
+            await engineSendInteractiveList({
+              accountId,
+              userId: configOwnerUserId,
+              conversationId: conversation.id,
+              contactId: contact.id,
+              headerText: bookingState.interactiveList.headerText,
+              bodyText: bookingState.interactiveList.bodyText,
+              buttonLabel: bookingState.interactiveList.buttonLabel,
+              footerText: bookingState.interactiveList.footerText,
+              sections: bookingState.interactiveList.sections,
+            })
+            return
+          } else if (bookingState.replyText) {
+            await engineSendText({
+              accountId,
+              userId: configOwnerUserId,
+              conversationId: conversation.id,
+              contactId: contact.id,
+              text: bookingState.replyText,
+              isAiReply: true,
+            })
+            return
+          }
+        }
+
+        // 2. Action: TALK TO TEAM (Transfer to human team, pause AI auto-reply, assign team member)
+        if (matchedBtn.action === 'talk_to_team') {
+          const replyText =
+            matchedBtn.reply_text ||
+            'Ji bilkul! 🙏 Aapki chat humari support team ko forward kar di gayi hai. Humare team member aapse jald hi direct baat karenge. Dhanyawad!'
+          await engineSendText({
+            accountId,
+            userId: configOwnerUserId,
+            conversationId: conversation.id,
+            contactId: contact.id,
+            text: replyText,
+            isAiReply: true,
+          })
+          const updatePayload: Record<string, unknown> = {
+            ai_autoreply_disabled: true,
+            status: 'open',
+          }
+          if (matchedBtn.assigned_agent_id) {
+            updatePayload.assigned_agent_id = matchedBtn.assigned_agent_id
+            console.log(
+              `[welcome menu] Pre-assigning conversation ${conversation.id} to team member ${matchedBtn.assigned_agent_id}`
+            )
+          }
+          await db
+            .from('conversations')
+            .update(updatePayload)
+            .eq('id', conversation.id)
+          return
+        }
+
+        // 3. Action: AI INQUIRY (Acknowledge and invite question, keep AI auto-reply active)
+        if (matchedBtn.action === 'ai_inquiry') {
+          const replyText =
+            matchedBtn.reply_text || 'Please let us know your query, how can we help you today?'
+          await engineSendText({
+            accountId,
+            userId: configOwnerUserId,
+            conversationId: conversation.id,
+            contactId: contact.id,
+            text: replyText,
+            isAiReply: true,
+          })
+          return
+        }
+
+        // 4. Action: CUSTOM REPLY (Predefined message)
+        if (matchedBtn.action === 'custom_reply' && matchedBtn.reply_text) {
+          await engineSendText({
+            accountId,
+            userId: configOwnerUserId,
+            conversationId: conversation.id,
+            contactId: contact.id,
+            text: matchedBtn.reply_text,
+            isAiReply: true,
+          })
+          return
+        }
+      }
+
+      // Check if customer already has an active booking session (giving name, phone, slot, payment)
+      const hasActiveBooking = conversation.current_booking_id && conversation.booking_step
+
+      if (!hasActiveBooking) {
+        const isGreeting = /^(hi|hello|hey|namaste|hlo|hii|hiii|good\s*(morning|evening|afternoon)|start|help)$/i.test(
+          lowerText
+        )
+        const { count: customerMsgCount } = await db
+          .from('messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('conversation_id', conversation.id)
+          .eq('sender_type', 'customer')
+
+        const isStartingMessage = isGreeting || (customerMsgCount ?? 0) <= 1
+
+        if (isStartingMessage && !replyId) {
+          console.log('[welcome menu] Sending intent qualification buttons to new/starting customer')
+          const headerText = (welcomeMenu.header_text || '').slice(0, 60)
+          const bodyText =
+            welcomeMenu.body_text ||
+            'Namaste! 🙏 Welcome. Aapki behtar sahayata ke liye, kripya confirm karein ki aap kis regarding connect karna chahte hain?'
+          const footerText = (welcomeMenu.footer_text || 'Please select an option below').slice(0, 60)
+
+          const formattedButtons = welcomeMenu.buttons.slice(0, 3).map((btn, idx) => ({
+            id: btn.id || `intent_btn_${idx + 1}`,
+            title: (btn.title || `Option ${idx + 1}`).slice(0, 20),
+          }))
+
+          await engineSendInteractiveButtons({
+            accountId,
+            userId: configOwnerUserId,
+            conversationId: conversation.id,
+            contactId: contact.id,
+            headerText: headerText || undefined,
+            bodyText,
+            buttons: formattedButtons,
+            footerText,
+          })
+          return
+        }
+      }
+    }
+
     // 1. UNCONDITIONAL BOOKING FLOW ENGINE EXECUTION
     // This allows booking intent & interactive list selections to work always!
     if (messageTextToProcess.trim()) {
@@ -294,16 +565,12 @@ export async function dispatchInboundToAiReply(
       conversation.status === 'snoozed' ||
       (conversation.last_message_at && Date.now() - lastMessageTime > 24 * 60 * 60 * 1000)
 
-    const isStaleHandover =
-      !conversation.assigned_agent_id &&
-      conversation.ai_autoreply_disabled === true
-
-    if (isNewInquiry || isStaleHandover) {
-      console.log(`[ai auto-reply] resetting conversation AI state: isNewInquiry=${isNewInquiry}, isStaleHandover=${isStaleHandover}`)
+    if (isNewInquiry) {
+      console.log(`[ai auto-reply] resetting conversation AI state for new inquiry`)
       await db
         .from('conversations')
         .update({
-          ai_reply_count: isNewInquiry ? 0 : conversation.ai_reply_count,
+          ai_reply_count: 0,
           ai_autoreply_disabled: false,
           status: 'open',
           assigned_agent_id: null,
@@ -313,9 +580,7 @@ export async function dispatchInboundToAiReply(
       conversation.ai_autoreply_disabled = false
       conversation.status = 'open'
       conversation.assigned_agent_id = null
-      if (isNewInquiry) {
-        conversation.ai_reply_count = 0
-      }
+      conversation.ai_reply_count = 0
     }
 
     const eligibility = await canSendAIAutoReply({
@@ -362,10 +627,15 @@ export async function dispatchInboundToAiReply(
       latestUserMessage(messages),
     )
 
+    const userPromptToUse = isBuddies
+      ? (config.systemPrompt ? `${BUDDIES_DEFAULT_PROMPT}\n\nAdditional Instructions:\n${config.systemPrompt}` : BUDDIES_DEFAULT_PROMPT)
+      : config.systemPrompt
+
     const systemPrompt = buildSystemPrompt({
-      userPrompt: config.systemPrompt,
+      userPrompt: userPromptToUse,
       mode: 'auto_reply',
       knowledge,
+      allowHandoff: !isBuddies,
     })
 
     const { text, handoff } = await generateReply({
@@ -389,6 +659,21 @@ export async function dispatchInboundToAiReply(
     }
 
     if (handoff || !text) {
+      if (isBuddies) {
+        console.log('[buddies ai] No handoff for Buddies Production — sending AI response')
+        const fallbackText =
+          "Hello! 🙏 Buddies Production me aapka swagat hai. Agar aap acting/casting, short film ya hamare camera gear & studio rental ke baare me pooch rahe hain, toh kripya apni query batayein — humari team aapko assist karegi!"
+        await engineSendText({
+          accountId,
+          userId: configOwnerUserId,
+          conversationId: conversation.id,
+          contactId: contact.id,
+          text: fallbackText,
+          isAiReply: true,
+        })
+        return
+      }
+
       await db
         .from('conversations')
         .update({ ai_autoreply_disabled: true })

@@ -1120,50 +1120,99 @@ async function findOrCreateContact(
   return { contact: newContact, wasCreated: true }
 }
 
+// Mutex map to prevent concurrent inbound webhooks for the same contact from
+// creating duplicate conversations simultaneously (e.g. when multiple images arrive at once).
+const conversationCreationLocks = new Map<
+  string,
+  Promise<{ conversation: any; created: boolean } | null>
+>()
+
 async function findOrCreateConversation(
   accountId: string,
   configOwnerUserId: string,
   contactId: string,
   message: WhatsAppMessage
-) {
-  const { data: existing, error: findError } = await supabaseAdmin()
-    .from('conversations')
-    .select('*')
-    .eq('account_id', accountId)
-    .eq('contact_id', contactId)
-    .single()
+): Promise<{ conversation: any; created: boolean } | null> {
+  const lockKey = `${accountId}:${contactId}`
 
-  if (!findError && existing) {
-    return { conversation: existing, created: false }
+  // If a conversation resolution/creation for this contact is already in flight,
+  // wait for it to complete so we reuse the created thread instead of racing.
+  const existingInFlight = conversationCreationLocks.get(lockKey)
+  if (existingInFlight) {
+    try {
+      const result = await existingInFlight
+      if (result) return result
+    } catch {
+      // In-flight resolution failed; continue with normal lookup
+    }
   }
 
-  // Create new conversation
-  const { data: newConv, error: createError } = await supabaseAdmin()
-    .from('conversations')
-    .insert({
-      account_id: accountId,
-      user_id: configOwnerUserId,
-      contact_id: contactId,
-    })
-    .select()
-    .single()
+  const lookupOrInsert = async (): Promise<{ conversation: any; created: boolean } | null> => {
+    // 1. Check for existing conversation (order by created_at asc, limit 1 so it never fails with PGRST116)
+    const { data: existingRows, error: findError } = await supabaseAdmin()
+      .from('conversations')
+      .select('*')
+      .eq('account_id', accountId)
+      .eq('contact_id', contactId)
+      .order('created_at', { ascending: true })
+      .limit(1)
 
-  if (createError) {
-    console.error('[webhook] conversation creation failed', {
-      whatsappMessageId: message.id,
-      senderNumber: contactId,
-      workspaceId: accountId,
-      whatsappAccountId: accountId,
-      dbErrorCode: createError.code,
-      errorMessage: createError.message,
-      stack: new Error().stack,
+    if (!findError && existingRows && existingRows.length > 0) {
+      return { conversation: existingRows[0], created: false }
+    }
+
+    // 2. Insert new conversation
+    const { data: newConv, error: createError } = await supabaseAdmin()
+      .from('conversations')
+      .insert({
+        account_id: accountId,
+        user_id: configOwnerUserId,
+        contact_id: contactId,
+      })
+      .select()
+      .maybeSingle()
+
+    if (createError) {
+      // If a race occurred and another request created the conversation concurrently (unique violation 23505)
+      if (isUniqueViolation(createError) || createError.code === '23505') {
+        const { data: racedRows } = await supabaseAdmin()
+          .from('conversations')
+          .select('*')
+          .eq('account_id', accountId)
+          .eq('contact_id', contactId)
+          .order('created_at', { ascending: true })
+          .limit(1)
+
+        if (racedRows && racedRows.length > 0) {
+          return { conversation: racedRows[0], created: false }
+        }
+      }
+
+      console.error('[webhook] conversation creation failed', {
+        whatsappMessageId: message.id,
+        senderNumber: contactId,
+        workspaceId: accountId,
+        whatsappAccountId: accountId,
+        dbErrorCode: createError.code,
+        errorMessage: createError.message,
+        stack: new Error().stack,
+      })
+      return null
+    }
+
+    console.log('[webhook] conversation created', {
+      conversationId: newConv?.id,
+      status: newConv?.status,
     })
-    return null
+    return { conversation: newConv, created: true }
   }
 
-  console.log('[webhook] conversation created', {
-    conversationId: newConv.id,
-    status: newConv.status,
-  })
-  return { conversation: newConv, created: true }
+  const promise = lookupOrInsert()
+  conversationCreationLocks.set(lockKey, promise)
+  try {
+    return await promise
+  } finally {
+    conversationCreationLocks.delete(lockKey)
+  }
 }
+
