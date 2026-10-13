@@ -426,7 +426,7 @@ export default function BillingPage() {
               <div>
                 <h4 className="text-sm font-semibold text-foreground">AI Agent Automation</h4>
                 <p className="text-xs text-muted-foreground">
-                  Smart AI replies powered by OpenAI, Gemini, & DeepSeek for auto-replying to WhatsApp leads 24/7.
+                  Smart AI replies powered by OpenAI, Gemini, Meta AI, & DeepSeek for auto-replying to WhatsApp leads 24/7.
                 </p>
               </div>
             </div>

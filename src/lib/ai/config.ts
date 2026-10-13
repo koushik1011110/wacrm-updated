@@ -3,7 +3,7 @@ import { decrypt } from '@/lib/whatsapp/encryption'
 import type { AiConfig } from './types'
 
 interface AiConfigRow {
-  provider: 'openai' | 'anthropic' | 'gemini' | 'deepseek'
+  provider: 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'meta'
   model: string
   api_key: string
   system_prompt: string | null
@@ -98,6 +98,9 @@ export async function loadAiConfig(
   } else if (model.startsWith('deepseek:')) {
     provider = 'deepseek'
     model = model.slice('deepseek:'.length)
+  } else if (model.startsWith('meta:')) {
+    provider = 'meta'
+    model = model.slice('meta:'.length)
   }
 
   return {

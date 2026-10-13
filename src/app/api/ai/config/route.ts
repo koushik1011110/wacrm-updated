@@ -78,6 +78,9 @@ export async function GET() {
     } else if (model.startsWith('deepseek:')) {
       provider = 'deepseek'
       model = model.slice('deepseek:'.length)
+    } else if (model.startsWith('meta:')) {
+      provider = 'meta'
+      model = model.slice('meta:'.length)
     }
 
     const { data: welcomeMenuAuto } = await supabase
@@ -131,8 +134,8 @@ export async function POST(request: Request) {
     if (!body || typeof body !== 'object') return bad('Invalid request body')
 
     const provider = body.provider as AiProvider
-    if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'gemini' && provider !== 'deepseek') {
-      return bad('provider must be "openai", "anthropic", "gemini" or "deepseek"')
+    if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'gemini' && provider !== 'deepseek' && provider !== 'meta') {
+      return bad('provider must be "openai", "anthropic", "gemini", "deepseek" or "meta"')
     }
     const model = typeof body.model === 'string' ? body.model.trim() : ''
     if (!model) return bad('model is required')
@@ -195,6 +198,9 @@ export async function POST(request: Request) {
     } else if (existingModel?.startsWith('deepseek:')) {
       existingProvider = 'deepseek'
       existingModel = existingModel.slice('deepseek:'.length)
+    } else if (existingModel?.startsWith('meta:')) {
+      existingProvider = 'meta'
+      existingModel = existingModel.slice('meta:'.length)
     }
 
     const credentialsChanged =

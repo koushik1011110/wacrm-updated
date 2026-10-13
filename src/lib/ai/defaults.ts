@@ -15,6 +15,7 @@ export const AI_PROVIDER_DEFAULT_MODEL: Record<AiProvider, string> = {
   anthropic: 'claude-haiku-4-5-20251001',
   gemini: 'gemini-2.5-flash',
   deepseek: 'deepseek-chat',
+  meta: 'muse-spark-1.2-contributor',
 }
 
 /**

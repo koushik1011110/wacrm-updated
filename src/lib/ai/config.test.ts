@@ -63,4 +63,19 @@ describe('loadAiConfig requireActive', () => {
     expect(config!.provider).toBe('gemini')
     expect(config!.model).toBe('gemini-2.5-pro')
   })
+
+  it('transparently maps meta: prefixed models to meta provider', async () => {
+    const config = await loadAiConfig(
+      dbReturning({
+        ...ROW,
+        provider: 'openai',
+        model: 'meta:muse-spark-1.3-contributor',
+      }),
+      'acct',
+      { requireActive: false }
+    )
+    expect(config).not.toBeNull()
+    expect(config!.provider).toBe('meta')
+    expect(config!.model).toBe('muse-spark-1.3-contributor')
+  })
 })

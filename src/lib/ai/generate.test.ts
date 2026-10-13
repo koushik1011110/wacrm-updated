@@ -300,3 +300,71 @@ describe('generateReply — DeepSeek', () => {
   })
 })
 
+describe('generateReply — Meta AI', () => {
+  it('calls the Meta AI responses endpoint and returns the reply', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        okResponse({
+          output: [
+            {
+              type: 'reasoning',
+              id: 'rs_123',
+            },
+            {
+              type: 'message',
+              role: 'assistant',
+              content: [
+                {
+                  type: 'output_text',
+                  text: 'Meta AI reply',
+                },
+              ],
+            },
+          ],
+        }),
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const res = await generateReply({
+      config: config({
+        provider: 'meta',
+        apiKey: 'LLM_test_key',
+        model: 'muse-spark-1.3-contributor',
+      }),
+      systemPrompt: 'sys instructions',
+      messages: [{ role: 'user', content: 'Hello Meta' }],
+    })
+
+    expect(res).toEqual({ text: 'Meta AI reply', handoff: false })
+    const [url, opts] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://api.meta.ai/v1/responses')
+    expect(opts.headers.Authorization).toBe('Bearer LLM_test_key')
+    const body = JSON.parse(opts.body)
+    expect(body.model).toBe('muse-spark-1.3-contributor')
+    expect(body.instructions).toBe('sys instructions')
+    expect(body.input).toEqual([{ role: 'user', content: 'Hello Meta' }])
+    expect(body.reasoning).toEqual({ effort: 'medium' })
+  })
+
+  it('throws typed AiError on empty response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        okResponse({
+          output: [],
+        }),
+      ),
+    )
+
+    await expect(
+      generateReply({
+        config: config({ provider: 'meta', apiKey: 'LLM_test' }),
+        systemPrompt: 'sys',
+        messages: [{ role: 'user', content: 'ping' }],
+      }),
+    ).rejects.toMatchObject({ code: 'empty_response' })
+  })
+})
+
+
